@@ -1039,6 +1039,82 @@ describe('resolveWorktreeRoot', () => {
   });
 });
 
+// ─── resolveWorktreeRoot — linked worktree with .planning/ (#1315) ───────────
+
+describe('resolveWorktreeRoot with linked worktree .planning/', () => {
+  const { resolveWorktreeRoot } = require('../get-shit-done/bin/lib/core.cjs');
+  const { execSync } = require('child_process');
+
+  test('returns linked worktree cwd when it has its own .planning/', () => {
+    const mainDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-wt-main-')));
+    let worktreeDir;
+    try {
+      // Set up main repo with a commit
+      execSync('git init', { cwd: mainDir, stdio: 'pipe' });
+      execSync('git config user.email "test@test.com"', { cwd: mainDir, stdio: 'pipe' });
+      execSync('git config user.name "Test"', { cwd: mainDir, stdio: 'pipe' });
+      execSync('git config commit.gpgsign false', { cwd: mainDir, stdio: 'pipe' });
+      fs.mkdirSync(path.join(mainDir, '.planning'), { recursive: true });
+      fs.writeFileSync(path.join(mainDir, 'README.md'), '# Main');
+      execSync('git add -A', { cwd: mainDir, stdio: 'pipe' });
+      execSync('git commit -m "initial"', { cwd: mainDir, stdio: 'pipe' });
+
+      // Create a linked worktree
+      worktreeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-wt-linked-')));
+      fs.rmSync(worktreeDir, { recursive: true, force: true });
+      execSync(`git worktree add "${worktreeDir}" -b test-linked`, { cwd: mainDir, stdio: 'pipe' });
+
+      // Give the linked worktree its own .planning/
+      fs.mkdirSync(path.join(worktreeDir, '.planning'), { recursive: true });
+
+      // resolveWorktreeRoot should return the linked worktree dir, not the main repo
+      const result = resolveWorktreeRoot(worktreeDir);
+      assert.strictEqual(result, worktreeDir,
+        'linked worktree with .planning/ should resolve to itself, not the main repo');
+    } finally {
+      if (worktreeDir) {
+        try { execSync(`git worktree remove "${worktreeDir}" --force`, { cwd: mainDir, stdio: 'pipe' }); } catch { /* ok */ }
+        try { fs.rmSync(worktreeDir, { recursive: true, force: true }); } catch { /* ok */ }
+      }
+      fs.rmSync(mainDir, { recursive: true, force: true });
+    }
+  });
+
+  test('returns main repo root when linked worktree has no .planning/', () => {
+    const mainDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-wt-main-')));
+    let worktreeDir;
+    try {
+      // Set up main repo with a commit
+      execSync('git init', { cwd: mainDir, stdio: 'pipe' });
+      execSync('git config user.email "test@test.com"', { cwd: mainDir, stdio: 'pipe' });
+      execSync('git config user.name "Test"', { cwd: mainDir, stdio: 'pipe' });
+      execSync('git config commit.gpgsign false', { cwd: mainDir, stdio: 'pipe' });
+      fs.writeFileSync(path.join(mainDir, 'README.md'), '# Main');
+      execSync('git add -A', { cwd: mainDir, stdio: 'pipe' });
+      execSync('git commit -m "initial"', { cwd: mainDir, stdio: 'pipe' });
+
+      // Create a linked worktree (no .planning/)
+      worktreeDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-wt-linked-')));
+      fs.rmSync(worktreeDir, { recursive: true, force: true });
+      execSync(`git worktree add "${worktreeDir}" -b test-linked-no-plan`, { cwd: mainDir, stdio: 'pipe' });
+
+      // resolveWorktreeRoot should return the main repo root
+      // Normalize both paths with fs.realpathSync to handle Windows 8.3 short paths
+      // (e.g., RUNNER~1 vs runneradmin on CI)
+      const result = fs.realpathSync(resolveWorktreeRoot(worktreeDir));
+      const expected = fs.realpathSync(mainDir);
+      assert.strictEqual(result, expected,
+        'linked worktree without .planning/ should resolve to main repo root');
+    } finally {
+      if (worktreeDir) {
+        try { execSync(`git worktree remove "${worktreeDir}" --force`, { cwd: mainDir, stdio: 'pipe' }); } catch { /* ok */ }
+        try { fs.rmSync(worktreeDir, { recursive: true, force: true }); } catch { /* ok */ }
+      }
+      fs.rmSync(mainDir, { recursive: true, force: true });
+    }
+  });
+});
+
 // ─── monorepo worktree CWD preservation (#1283) ─────────────────────────────
 
 describe('monorepo worktree CWD preservation', () => {

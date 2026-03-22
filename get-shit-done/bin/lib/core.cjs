@@ -451,6 +451,12 @@ function execGit(cwd, args) {
  * Returns the main worktree path, or cwd if not in a worktree.
  */
 function resolveWorktreeRoot(cwd) {
+  // If the current directory already has its own .planning/, respect it.
+  // This handles linked worktrees with independent planning state (e.g., Conductor workspaces).
+  if (fs.existsSync(path.join(cwd, '.planning'))) {
+    return cwd;
+  }
+
   // Check if we're in a linked worktree
   const gitDir = execGit(cwd, ['rev-parse', '--git-dir']);
   const commonDir = execGit(cwd, ['rev-parse', '--git-common-dir']);
