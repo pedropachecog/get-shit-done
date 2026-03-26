@@ -159,7 +159,41 @@ Agent names: `gsd-planner`, `gsd-executor`, `gsd-phase-researcher`, `gsd-project
 
 ---
 
-## Verification Commands
+## Research Visibility
+
+Check local research stack readiness and active MCP providers:
+
+```bash
+# Human-readable output
+node gsd-tools.cjs research-status
+
+# Machine-readable JSON output
+node gsd-tools.cjs research-status --raw
+```
+
+**Output fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | `ready`, `degraded`, or `blocked` |
+| `checked_at` | string | ISO timestamp of the check |
+| `providers` | array | List of MCP providers with name, scope, transport, connectivity |
+| `active_scopes` | array | Unique scopes of connected providers (`user`, `project`, `local`) |
+| `warnings` | array | Non-blocking issues (e.g., provider configured but not connected) |
+| `remediations` | array | Actionable steps to resolve blocked/degraded status |
+
+**Status rules:**
+- `ready` — At least one connected local-first MCP provider (e.g., searxng)
+- `blocked` — Claude CLI unavailable, no MCP configured, or zero connected providers
+- `degraded` — At least one provider present but warnings or remediations exist
+
+**Remediation codes:**
+| Code | Meaning |
+|------|---------|
+| `CLI_MISSING` | Claude CLI not found or not executable |
+| `NO_MCP_CONFIGURED` | No MCP servers in configuration files |
+| `ZERO_CONNECTED` | MCP servers configured but none are connected |
+| `PROVIDER_DISCONNECTED` | Provider configured but server is unavailable |
+| `INVALID_MCP_JSON` | JSON syntax error in `.mcp.json` or `~/.claude.json` |
 
 Validate plans, phases, references, and commits.
 
