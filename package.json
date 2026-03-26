@@ -1,7 +1,7 @@
 {
   "name": "get-shit-done-cc",
   "version": "1.34.2",
-  "description": "A meta-prompting, context engineering and spec-driven development system for Claude Code, OpenCode, Gemini and Codex by TÂCHES.",
+  "description": "A Claude-first, local-first fork of the get-shit-done workflow system for Claude Code and secondary runtime support.",
   "bin": {
     "get-shit-done-cc": "bin/install.js"
   },
@@ -29,11 +29,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gsd-build/get-shit-done.git"
+    "url": "git+https://github.com/pedropachecog/get-shit-done.git"
   },
-  "homepage": "https://github.com/gsd-build/get-shit-done",
+  "homepage": "https://github.com/pedropachecog/get-shit-done",
   "bugs": {
-    "url": "https://github.com/gsd-build/get-shit-done/issues"
+    "url": "https://github.com/pedropachecog/get-shit-done/issues"
   },
   "engines": {
     "node": ">=22.0.0"
