@@ -895,6 +895,33 @@ When a workflow fails in a way that isn't obvious -- plans reference nonexistent
 
 **Output:** A diagnostic report written to `.planning/forensics/` with findings and suggested remediation steps.
 
+### Research Stack Preflight (`/gsd:research-status`)
+
+Before running research-heavy workflows, check your local research stack readiness:
+
+```bash
+/gsd:research-status
+```
+
+**Status outputs:**
+- `ready` — At least one local-first MCP provider is connected (e.g., searxng via MCP)
+- `degraded` — At least one provider is configured but warnings or remediations exist
+- `blocked` — Claude CLI unavailable, no MCP configured, or zero connected providers
+
+**Scope labels:**
+- `user` — Provider configured in `~/.claude.json` (global user config)
+- `project` — Provider configured in `.mcp.json` (project-local config)
+- `local` — Provider configured in `.claude/settings.local.json` (session-local overrides)
+
+**Common remediations:**
+- `missing Claude CLI` — Install or update Claude Code CLI
+- `no MCP servers` — Add MCP server configuration to `.mcp.json` or `~/.claude.json`
+- `disconnected provider` — Check server availability and retry
+- `project approval required` — Approve the MCP server when prompted
+- `invalid .mcp.json` — Fix JSON syntax errors in your MCP configuration file
+
+Use `/gsd:research-status --raw` for machine-readable JSON output.
+
 ### Subagent Appears to Fail but Work Was Done
 
 A known workaround exists for a Claude Code classification bug. GSD's orchestrators (execute-phase, quick) spot-check actual output before reporting failure. If you see a failure message but commits were made, check `git log` -- the work may have succeeded.
