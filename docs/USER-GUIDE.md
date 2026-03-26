@@ -2,6 +2,10 @@
 
 A detailed reference for workflows, troubleshooting, and configuration. For quick-start setup, see the [README](../README.md).
 
+GSDL-CC is Claude-first and local-first in v1. The primary setup path for this fork is direct repo usage with `node bin/install.js --claude --local`, while Codex, Gemini, OpenCode, and the other runtimes remain available as secondary paths.
+
+When local research prerequisites are unavailable, this fork is moving toward explicit `context-only` reporting instead of pretending hosted-provider-backed research already happened.
+
 ---
 
 ## Table of Contents
@@ -850,3 +854,4 @@ For reference, here is what GSD creates in your project:
       XX-UI-REVIEW.md     # Visual audit scores (from /gsd:ui-review)
   ui-reviews/             # Screenshots from /gsd:ui-review (gitignored)
 ```
+

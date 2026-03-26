@@ -287,9 +287,10 @@ const banner = '\n' +
   '  ╚██████╔╝███████║██████╔╝\n' +
   '   ╚═════╝ ╚══════╝╚═════╝' + reset + '\n' +
   '\n' +
-  '  Get Shit Done ' + dim + 'v' + pkg.version + reset + '\n' +
-  '  A meta-prompting, context engineering and spec-driven\n' +
-  '  development system for Claude Code, OpenCode, Gemini, Codex, Copilot, Antigravity, Cursor, and Windsurf by TÂCHES.\n';
+  '  GSDL-CC ' + dim + 'v' + pkg.version + reset + '\n' +
+  '  A Claude-first, local-first fork for Claude Code with\n' +
+  '  secondary runtime support for Codex, Gemini, OpenCode, Copilot, Antigravity, Cursor, and Windsurf.\n' +
+  '  Direct repo example: node bin/install.js --claude --local\n';
 
 // Parse --config-dir argument
 function parseConfigDirArg() {
@@ -4923,3 +4924,4 @@ if (hasGlobal && hasLocal) {
 }
 
 } // end of else block for GSD_TEST_MODE
+
