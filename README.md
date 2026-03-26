@@ -1,12 +1,12 @@
 <div align="center">
 
-# GET SHIT DONE
+# GSDL-CC
 
 **English** · [Português](README.pt-BR.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja-JP.md) · [한국어](README.ko-KR.md)
 
-**A light-weight and powerful meta-prompting, context engineering and spec-driven development system for Claude Code, OpenCode, Gemini CLI, Codex, Copilot, Cursor, Windsurf, and Antigravity.**
+**A Claude-first, local-first fork of `get-shit-done` for Claude Code, with Codex, Gemini CLI, OpenCode, Copilot, Cursor, Windsurf, and Antigravity kept available as secondary runtimes in v1.**
 
-**Solves context rot — the quality degradation that happens as Claude fills its context window.**
+**Solves context rot while making direct repo usage the primary install path for this fork.**
 
 [![npm version](https://img.shields.io/npm/v/get-shit-done-cc?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/get-shit-done-cc)
 [![npm downloads](https://img.shields.io/npm/dm/get-shit-done-cc?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/get-shit-done-cc)
@@ -20,10 +20,12 @@
 <br>
 
 ```bash
-npx get-shit-done-cc@latest
+git clone https://github.com/pedropachecog/get-shit-done.git
+cd get-shit-done
+node bin/install.js --claude --local
 ```
 
-**Works on Mac, Windows, and Linux.**
+**Works on Mac, Windows, and Linux. npm install remains available as a secondary path.**
 
 <br>
 
@@ -77,12 +79,20 @@ People who want to describe what they want and have it built correctly — witho
 
 ## Getting Started
 
+Use the direct repo path first for this fork:
+
 ```bash
-npx get-shit-done-cc@latest
+git clone https://github.com/pedropachecog/get-shit-done.git
+cd get-shit-done
+node bin/install.js --claude --local
 ```
 
+This is the primary Claude Code path for GSDL-CC in v1. It keeps the install local to the repo, works well in local or container environments, and does not require paid search or docs subscriptions just to get started.
+
+If you prefer the packaged installer, `npx get-shit-done-cc@latest` is still available as a secondary path.
+
 The installer prompts you to choose:
-1. **Runtime** — Claude Code, OpenCode, Gemini, Codex, Copilot, Cursor, Windsurf, Antigravity, or all (interactive multi-select — pick multiple runtimes in a single install session)
+1. **Runtime** — Claude Code first, with OpenCode, Gemini, Codex, Copilot, Cursor, Windsurf, Antigravity, or all still available as secondary runtime targets.
 2. **Location** — Global (all projects) or local (current project only)
 
 Verify with:
@@ -149,15 +159,15 @@ Use `--claude`, `--opencode`, `--gemini`, `--codex`, `--copilot`, `--cursor`, `-
 <details>
 <summary><strong>Development Installation</strong></summary>
 
-Clone the repository and run the installer locally:
+Clone the fork repository and run the installer locally:
 
 ```bash
-git clone https://github.com/gsd-build/get-shit-done.git
+git clone https://github.com/pedropachecog/get-shit-done.git
 cd get-shit-done
 node bin/install.js --claude --local
 ```
 
-Installs to `./.claude/` for testing modifications before contributing.
+This is the primary install path for the fork. It installs to `./.claude/` for direct repo usage, testing modifications, and container-friendly setups before contributing.
 
 </details>
 
@@ -843,3 +853,4 @@ MIT License. See [LICENSE](LICENSE) for details.
 **Claude Code is powerful. GSD makes it reliable.**
 
 </div>
+
