@@ -33,6 +33,7 @@
  *   phase-plan-index <phase>           Index plans with waves and status
  *   websearch <query>                  Search web via Brave API (if configured)
  *     [--limit N] [--freshness day|week|month]
+ *   research-status                    Inspect current local research stack readiness, providers, scopes, and remediation
  *
  * Phase Operations:
  *   phase next-decimal <phase>         Calculate next decimal phase number
@@ -152,6 +153,7 @@ const frontmatter = require('./lib/frontmatter.cjs');
 const profilePipeline = require('./lib/profile-pipeline.cjs');
 const profileOutput = require('./lib/profile-output.cjs');
 const workstream = require('./lib/workstream.cjs');
+const researchVisibility = require('./lib/research-visibility.cjs');
 
 // ─── Arg parsing helpers ──────────────────────────────────────────────────────
 
@@ -792,6 +794,11 @@ async function runCommand(command, args, cwd, raw) {
         limit: limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : 10,
         freshness: freshnessIdx !== -1 ? args[freshnessIdx + 1] : null,
       }, raw);
+      break;
+    }
+
+    case 'research-status': {
+      researchVisibility.cmdResearchStatus(cwd, raw);
       break;
     }
 
