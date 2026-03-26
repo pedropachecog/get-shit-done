@@ -175,6 +175,7 @@ const profileOutput = require('./lib/profile-output.cjs');
 const workstream = require('./lib/workstream.cjs');
 const docs = require('./lib/docs.cjs');
 const learnings = require('./lib/learnings.cjs');
+const researchVisibility = require('./lib/research-visibility.cjs');
 
 // ─── Arg parsing helpers ──────────────────────────────────────────────────────
 
@@ -1067,6 +1068,11 @@ async function runCommand(command, args, cwd, raw, defaultValue) {
       } else {
         error('Unknown learnings subcommand. Available: list, query, copy, prune, delete');
       }
+      break;
+    }
+
+    case 'research-status': {
+      researchVisibility.cmdResearchStatus(cwd, raw);
       break;
     }
 
