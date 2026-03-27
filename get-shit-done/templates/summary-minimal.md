@@ -15,6 +15,7 @@ key-files:
 key-decisions: []
 duration: Xmin
 completed: YYYY-MM-DD
+research_state: researched  # researched | context-only | blocked
 ---
 
 # Phase [X]: [Name] Summary (Minimal)

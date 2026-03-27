@@ -16,6 +16,7 @@ key-decisions:
   - "Decision 1"
 duration: Xmin
 completed: YYYY-MM-DD
+research_state: researched  # researched | context-only | blocked
 ---
 
 # Phase [X]: [Name] Summary
