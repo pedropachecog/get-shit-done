@@ -43,6 +43,8 @@ Set `TEXT_MODE=true` if `--text` is present in $ARGUMENTS OR `text_mode` from in
 
 Extract `--prd <filepath>` from $ARGUMENTS. If present, set PRD_FILE to the filepath.
 
+Extract `--context-only` from $ARGUMENTS. If present, set CONTEXT_ONLY=true. When CONTEXT_ONLY is true, proceed without research even if research is blocked.
+
 **If no phase number:** Detect next unplanned phase from roadmap.
 
 **If `phase_found` is false:** Validate phase exists in ROADMAP.md. If valid, create the directory using `phase_slug` and `padded_phase` from init:
@@ -78,7 +80,82 @@ PHASE_INFO=$(node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" roadmap get-ph
 
 **If `found` is false:** Error with available phases. **If `found` is true:** Extract `phase_number`, `phase_name`, `goal` from JSON.
 
-## 3.5. Handle PRD Express Path
+## 3.5. Research Preflight Check
+
+**Skip if:** `--gaps` flag, `--skip-research` flag, `--reviews` flag, or CONTEXT_ONLY=true.
+
+Call the research-status helper (from Phase 2):
+```bash
+RESEARCH_STATUS=$(node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" research-status --raw 2>/dev/null)
+```
+
+Parse the JSON output to extract status:
+```bash
+RESEARCH_STATUS_VALUE=$(echo "$RESEARCH_STATUS" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); process.stdout.write(o.status||'blocked')" 2>/dev/null || echo "blocked")
+```
+
+Set research_state based on availability:
+```bash
+case "$RESEARCH_STATUS_VALUE" in
+  ready)
+    RESEARCH_STATE="researched"
+    ;;
+  degraded)
+    RESEARCH_STATE="researched"  # Degraded still has some research capability
+    ;;
+  blocked|*)
+    RESEARCH_STATE="blocked"
+    ;;
+esac
+```
+
+**If CONTEXT_ONLY=true:** Override research_state to context-only and proceed:
+```bash
+if [ "$CONTEXT_ONLY" = "true" ]; then
+  RESEARCH_STATE="context-only"
+fi
+```
+
+**If RESEARCH_STATE is "blocked" AND CONTEXT_ONLY is false:** Show soft block warning per D-01.
+Continue to step 3.6 (Soft Block Warning).
+
+**If RESEARCH_STATE is "researched" or CONTEXT_ONLY is true:** Set variable and continue to step 3.7 (renumbered Handle PRD Express Path).
+
+## 3.6. Soft Block Warning
+
+**Skip if:** RESEARCH_STATE is not "blocked".
+
+Display soft block banner per D-01:
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ GSD ► RESEARCH BLOCKED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Required research is unavailable for Phase {X}: {phase_name}.
+
+Research status: {RESEARCH_STATUS_VALUE}
+
+Options:
+1. Proceed in context-only mode — Plan using existing context and requirements only
+2. Fix research and retry — Run /gsd:research-status for diagnostics
+3. Abort — Cancel planning
+
+Enter number:
+```
+
+If TEXT_MODE is false, use AskUserQuestion:
+- header: "Research Blocked"
+- question: "Required research is unavailable for Phase {X}. Proceed in context-only mode or fix research first?"
+- options:
+  - "Proceed in context-only mode" → Set RESEARCH_STATE="context-only", continue to step 3.7
+  - "Fix research and retry" → Display `/gsd:research-status ${GSD_WS}`, exit workflow
+  - "Abort" → Display "Planning cancelled.", exit workflow
+
+If user selects "Proceed in context-only mode":
+- Set RESEARCH_STATE="context-only"
+- Continue to step 3.7 (renumbered Handle PRD Express Path)
+
+## 3.7. Handle PRD Express Path
 
 **Skip if:** No `--prd` flag in arguments.
 
@@ -178,13 +255,13 @@ Use full relative paths. Group by topic area.]
 node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" commit "docs(${padded_phase}): generate context from PRD" --files "${phase_dir}/${padded_phase}-CONTEXT.md"
 ```
 
-6. Set `context_content` to the generated CONTEXT.md content and continue to step 5 (Handle Research).
+6. Set `context_content` to the generated CONTEXT.md content and continue to step 7 (Handle Research).
 
-**Effect:** This completely bypasses step 4 (Load CONTEXT.md) since we just created it. The rest of the workflow (research, planning, verification) proceeds normally with the PRD-derived context.
+**Effect:** This completely bypasses step 5 (Load CONTEXT.md) since we just created it. The rest of the workflow (research, planning, verification) proceeds normally with the PRD-derived context.
 
-## 4. Load CONTEXT.md
+## 6. Load CONTEXT.md
 
-**Skip if:** PRD express path was used (CONTEXT.md already created in step 3.5).
+**Skip if:** PRD express path was used (CONTEXT.md already created in step 3.7).
 
 Check `context_path` from init JSON.
 
@@ -220,7 +297,7 @@ Otherwise use AskUserQuestion:
   If `DISCUSS_MODE` is `"discuss"` (or unset):
   - "Run discuss-phase first" — Capture design decisions before planning
 
-If "Continue without context": Proceed to step 5.
+If "Continue without context": Proceed to step 7.
 If "Run discuss-phase first":
   **IMPORTANT:** Do NOT invoke discuss-phase as a nested Skill/Task call — AskUserQuestion
   does not work correctly in nested subcontexts (#1009). Instead, display the command
@@ -232,11 +309,11 @@ If "Run discuss-phase first":
   ```
   **Exit the plan-phase workflow. Do not continue.**
 
-## 5. Handle Research
+## 7. Handle Research
 
 **Skip if:** `--gaps` flag or `--skip-research` flag or `--reviews` flag.
 
-**If `has_research` is true (from init) AND no `--research` flag:** Use existing, skip to step 6.
+**If `has_research` is true (from init) AND no `--research` flag:** Use existing, skip to step 8.
 
 **If RESEARCH.md missing OR `--research` flag:**
 
@@ -268,7 +345,7 @@ AskUserQuestion([
 ])
 ```
 
-If user selects "Skip research": skip to step 6.
+If user selects "Skip research": skip to step 8.
 
 **If `--auto` and `research_enabled` is false:** Skip research silently (preserves automated behavior).
 
@@ -327,21 +404,21 @@ Task(
 
 ### Handle Researcher Return
 
-- **`## RESEARCH COMPLETE`:** Display confirmation, continue to step 6
+- **`## RESEARCH COMPLETE`:** Display confirmation, continue to step 8
 - **`## RESEARCH BLOCKED`:** Display blocker, offer: 1) Provide context, 2) Skip research, 3) Abort
 
-## 5.5. Create Validation Strategy
+## 7.5. Create Validation Strategy
 
 Skip if `nyquist_validation_enabled` is false OR `research_enabled` is false.
 
-If `research_enabled` is false and `nyquist_validation_enabled` is true: warn "Nyquist validation enabled but research disabled — VALIDATION.md cannot be created without RESEARCH.md. Plans will lack validation requirements (Dimension 8)." Continue to step 6.
+If `research_enabled` is false and `nyquist_validation_enabled` is true: warn "Nyquist validation enabled but research disabled — VALIDATION.md cannot be created without RESEARCH.md. Plans will lack validation requirements (Dimension 8)." Continue to step 8.
 
 **But Nyquist is not applicable for this run** when all of the following are true:
 - `research_enabled` is false
 - `has_research` is false
 - no `--research` flag was provided
 
-In that case: **skip validation-strategy creation entirely**. Do **not** expect `RESEARCH.md` or `VALIDATION.md` for this run, and continue to Step 6.
+In that case: **skip validation-strategy creation entirely**. Do **not** expect `RESEARCH.md` or `VALIDATION.md` for this run, and continue to Step 8.
 
 ```bash
 grep -l "## Validation Architecture" "${PHASE_DIR}"/*-RESEARCH.md 2>/dev/null || true
@@ -355,12 +432,14 @@ grep -l "## Validation Architecture" "${PHASE_DIR}"/*-RESEARCH.md 2>/dev/null ||
 ```bash
 test -f "${PHASE_DIR}/${PADDED_PHASE}-VALIDATION.md" && echo "VALIDATION_CREATED=true" || echo "VALIDATION_CREATED=false"
 ```
-5. If `VALIDATION_CREATED=false`: STOP — do not proceed to Step 6
+5. If `VALIDATION_CREATED=false`: STOP — do not proceed to Step 8
 6. If `commit_docs`: `commit "docs(phase-${PHASE}): add validation strategy"`
+
+Proceed to Step 8 after validation strategy is created.
 
 **If not found:** Warn and continue — plans may fail Dimension 8.
 
-## 5.6. UI Design Contract Gate
+## 7.6. UI Design Contract Gate
 
 > Skip if `workflow.ui_phase` is explicitly `false` AND `workflow.ui_safety_gate` is explicitly `false` in `.planning/config.json`. If keys are absent, treat as enabled.
 
@@ -369,7 +448,7 @@ UI_PHASE_CFG=$(node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" config-get w
 UI_GATE_CFG=$(node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" config-get workflow.ui_safety_gate 2>/dev/null || echo "true")
 ```
 
-**If both are `false`:** Skip to step 6.
+**If both are `false`:** Skip to step 8.
 
 Check if phase has frontend indicators:
 
@@ -406,12 +485,12 @@ Otherwise use AskUserQuestion:
 - question: "Phase {N} has frontend indicators but no UI-SPEC.md. Generate a design contract before planning?"
 - options:
   - "Generate UI-SPEC first" → Display: "Run `/gsd:ui-phase {N} ${GSD_WS}` then re-run `/gsd:plan-phase {N} ${GSD_WS}`". Exit workflow.
-  - "Continue without UI-SPEC" → Continue to step 6.
-  - "Not a frontend phase" → Continue to step 6.
+  - "Continue without UI-SPEC" → Continue to step 8.
+  - "Not a frontend phase" → Continue to step 8.
 
-**If `HAS_UI` is 1 (no frontend indicators):** Skip silently to step 6.
+**If `HAS_UI` is 1 (no frontend indicators):** Skip silently to step 8.
 
-## 6. Check Existing Plans
+## 8. Check Existing Plans
 
 ```bash
 ls "${PHASE_DIR}"/*-PLAN.md 2>/dev/null || true
@@ -421,7 +500,7 @@ ls "${PHASE_DIR}"/*-PLAN.md 2>/dev/null || true
 
 **If exists AND no `--reviews` flag:** Offer: 1) Add more plans, 2) View existing, 3) Replan from scratch.
 
-## 7. Use Context Paths from INIT
+## 9. Use Context Paths from INIT
 
 Extract from INIT JSON:
 
@@ -437,7 +516,7 @@ CONTEXT_PATH=$(_gsd_field "$INIT" context_path)
 REVIEWS_PATH=$(_gsd_field "$INIT" reviews_path)
 ```
 
-## 7.5. Verify Nyquist Artifacts
+## 9.5. Verify Nyquist Artifacts
 
 Skip if `nyquist_validation_enabled` is false OR `research_enabled` is false.
 
@@ -458,9 +537,9 @@ If missing and Nyquist is still enabled/applicable — ask user:
    `node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" config-set workflow.nyquist_validation false`
 3. Continue anyway (plans fail Dimension 8)
 
-Proceed to Step 8 only if user selects 2 or 3.
+Proceed to Step 10 only if user selects 2 or 3.
 
-## 8. Spawn gsd-planner Agent
+## 10. Spawn gsd-planner Agent
 
 Display banner:
 ```
@@ -493,6 +572,10 @@ Planner prompt:
 ${AGENT_SKILLS_PLANNER}
 
 **Phase requirement IDs (every ID MUST appear in a plan's `requirements` field):** {phase_req_ids}
+
+**Research state:** {RESEARCH_STATE} (researched = research available, context-only = proceeding without research, blocked = research unavailable)
+
+**IMPORTANT:** Set `research_state: {RESEARCH_STATE}` in all PLAN.md frontmatter files to label the evidence state per D-03.
 
 **Project instructions:** Read ./CLAUDE.md if exists — follow project-specific guidelines
 **Project skills:** Check .claude/skills/ or .agents/skills/ directory (if either exists) — read SKILL.md files, plans should account for project skill rules
@@ -557,13 +640,13 @@ Task(
 )
 ```
 
-## 9. Handle Planner Return
+## 11. Handle Planner Return
 
-- **`## PLANNING COMPLETE`:** Display plan count. If `--skip-verify` or `plan_checker_enabled` is false (from init): skip to step 13. Otherwise: step 10.
-- **`## CHECKPOINT REACHED`:** Present to user, get response, spawn continuation (step 12)
+- **`## PLANNING COMPLETE`:** Display plan count. If `--skip-verify` or `plan_checker_enabled` is false (from init): skip to step 17. Otherwise: step 12.
+- **`## CHECKPOINT REACHED`:** Present to user, get response, spawn continuation (step 14)
 - **`## PLANNING INCONCLUSIVE`:** Show attempts, offer: Add context / Retry / Manual
 
-## 10. Spawn gsd-plan-checker Agent
+## 12. Spawn gsd-plan-checker Agent
 
 Display banner:
 ```
@@ -612,12 +695,12 @@ Task(
 )
 ```
 
-## 11. Handle Checker Return
+## 13. Handle Checker Return
 
 - **`## VERIFICATION PASSED`:** Display confirmation, proceed to step 13.
 - **`## ISSUES FOUND`:** Display issues, check iteration count, proceed to step 12.
 
-## 12. Revision Loop (Max 3 Iterations)
+## 14. Revision Loop (Max 3 Iterations)
 
 Track `iteration_count` (starts at 1 after initial plan + check).
 
@@ -666,7 +749,7 @@ Display: `Max iterations reached. {N} issues remain:` + issue list
 
 Offer: 1) Force proceed, 2) Provide guidance and retry, 3) Abandon
 
-## 13. Requirements Coverage Gate
+## 15. Requirements Coverage Gate
 
 After plans pass the checker (or checker is skipped), verify that all phase requirements are covered by at least one plan.
 
@@ -717,11 +800,11 @@ Options:
 
 If `TEXT_MODE` is true, present as a plain-text numbered list (options already shown in the block above). Otherwise use AskUserQuestion to present the options.
 
-## 14. Present Final Status
+## 16. Present Final Status
 
 Route to `<offer_next>` OR `auto_advance` depending on flags/config.
 
-## 15. Auto-Advance Check
+## 17. Auto-Advance Check
 
 Check for auto-advance trigger:
 
