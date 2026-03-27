@@ -22,6 +22,7 @@ files_modified: []          # Files this plan modifies.
 autonomous: true            # false if plan has checkpoints requiring user interaction
 requirements: []            # REQUIRED — Requirement IDs from ROADMAP this plan addresses. MUST NOT be empty.
 user_setup: []              # Human-required setup Claude cannot automate (see below)
+research_state: researched  # researched | context-only | blocked (per D-03)
 
 # Goal-backward verification (derived during planning, verified after execution)
 must_haves:
@@ -140,6 +141,7 @@ After completion, create `.planning/phases/XX-name/{phase}-{plan}-SUMMARY.md`
 | `autonomous` | Yes | `true` if no checkpoints, `false` if has checkpoints |
 | `requirements` | Yes | **MUST** list requirement IDs from ROADMAP. Every roadmap requirement MUST appear in at least one plan. |
 | `user_setup` | No | Array of human-required setup items (external services) |
+| `research_state` | Yes | Research state: researched (research available), context-only (proceeded without research), blocked (research unavailable, cannot proceed) |
 | `must_haves` | Yes | Goal-backward verification criteria (see below) |
 
 **Wave is pre-computed:** Wave numbers are assigned during `/gsd-plan-phase`. Execute-phase reads `wave` directly from frontmatter and groups plans by wave number. No runtime dependency analysis needed.
