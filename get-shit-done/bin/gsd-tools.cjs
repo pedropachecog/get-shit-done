@@ -1102,6 +1102,8 @@ async function runCommand(command, args, cwd, raw, defaultValue) {
       const frontmatterBlock = frontmatterMatch[1];
       const fields = {};
       for (const line of frontmatterBlock.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
         const colonIdx = line.indexOf(':');
         if (colonIdx === -1) continue;
         const key = line.substring(0, colonIdx).trim();
