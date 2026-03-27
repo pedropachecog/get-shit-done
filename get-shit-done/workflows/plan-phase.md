@@ -52,6 +52,8 @@ Set `TEXT_MODE=true` if `--text` is present in $ARGUMENTS OR `text_mode` from in
 
 Extract `--prd <filepath>` from $ARGUMENTS. If present, set PRD_FILE to the filepath.
 
+Extract `--context-only` from $ARGUMENTS. If present, set CONTEXT_ONLY=true. When CONTEXT_ONLY is true, proceed without research even if research is blocked.
+
 **If no phase number:** Detect next unplanned phase from roadmap.
 
 **If `phase_found` is false:** Validate phase exists in ROADMAP.md. If valid, create the directory using `phase_slug` and `padded_phase` from init:
@@ -86,6 +88,47 @@ PHASE_INFO=$(node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" roadmap get-ph
 ```
 
 **If `found` is false:** Error with available phases. **If `found` is true:** Extract `phase_number`, `phase_name`, `goal` from JSON.
+
+## 3.4. Research Preflight Check
+
+**Skip if:** `--skip-research` flag or `--gaps` flag or `--reviews` flag.
+
+Run research status check:
+```bash
+RESEARCH_STATUS=$(node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" research-status --raw 2>/dev/null)
+```
+
+Parse the JSON output to extract status:
+```bash
+RESEARCH_STATUS_VALUE=$(echo "$RESEARCH_STATUS" | node -e "const o=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); process.stdout.write(o.status||'blocked')" 2>/dev/null || echo "blocked")
+```
+
+Set research_state based on availability:
+```bash
+case "$RESEARCH_STATUS_VALUE" in
+  ready)
+    RESEARCH_STATE="researched"
+    ;;
+  degraded)
+    RESEARCH_STATE="researched"  # Degraded still has some research capability
+    ;;
+  blocked|*)
+    RESEARCH_STATE="blocked"
+    ;;
+esac
+```
+
+**If CONTEXT_ONLY=true:** Override research_state to context-only and proceed:
+```bash
+if [ "$CONTEXT_ONLY" = "true" ]; then
+  RESEARCH_STATE="context-only"
+fi
+```
+
+**If RESEARCH_STATE is "blocked" AND CONTEXT_ONLY is false:** Show soft block warning per D-01.
+Continue to step 3.6 (Soft Block Warning).
+
+**If RESEARCH_STATE is "researched" or CONTEXT_ONLY is true:** Set variable and continue to step 3.5.
 
 ## 3.5. Handle PRD Express Path
 
@@ -190,6 +233,40 @@ node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" commit "docs(${padded_phase
 6. Set `context_content` to the generated CONTEXT.md content and continue to step 5 (Handle Research).
 
 **Effect:** This completely bypasses step 4 (Load CONTEXT.md) since we just created it. The rest of the workflow (research, planning, verification) proceeds normally with the PRD-derived context.
+
+## 3.6. Soft Block Warning
+
+**Skip if:** RESEARCH_STATE is not "blocked".
+
+Display soft block banner per D-01:
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ GSD ► RESEARCH BLOCKED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Required research is unavailable for Phase {X}: {phase_name}.
+
+Research status: {RESEARCH_STATUS_VALUE}
+
+Options:
+1. Proceed in context-only mode — Plan using existing context and requirements only
+2. Fix research and retry — Run /gsd:research-status for diagnostics
+3. Abort — Cancel planning
+
+Enter number:
+```
+
+If TEXT_MODE is false, use AskUserQuestion:
+- header: "Research Blocked"
+- question: "Required research is unavailable for Phase {X}. Proceed in context-only mode or fix research first?"
+- options:
+  - "Proceed in context-only mode" → Set RESEARCH_STATE="context-only", continue to step 4
+  - "Fix research and retry" → Display `/gsd:research-status ${GSD_WS}`, exit workflow
+  - "Abort" → Display "Planning cancelled.", exit workflow
+
+If user selects "Proceed in context-only mode":
+- Set RESEARCH_STATE="context-only"
+- Continue to step 4 (Load CONTEXT.md)
 
 ## 4. Load CONTEXT.md
 
@@ -615,6 +692,10 @@ ${CONTEXT_WINDOW >= 500000 ? `
 ${AGENT_SKILLS_PLANNER}
 
 **Phase requirement IDs (every ID MUST appear in a plan's `requirements` field):** {phase_req_ids}
+
+**Research state:** {RESEARCH_STATE} (researched = research available, context-only = proceeding without research, blocked = research unavailable)
+
+**IMPORTANT:** Set `research_state: {RESEARCH_STATE}` in all PLAN.md frontmatter files to label the evidence state per D-03.
 
 **Project instructions:** Read ./CLAUDE.md if exists — follow project-specific guidelines
 **Project skills:** Check .claude/skills/ or .agents/skills/ directory (if either exists) — read SKILL.md files, plans should account for project skill rules
