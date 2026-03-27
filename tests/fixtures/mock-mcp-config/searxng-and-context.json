@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "searxng": {
+      "enabled": true,
+      "connected": true,
+      "scope": "user",
+      "transport": "stdio"
+    },
+    "context": {
+      "enabled": true,
+      "connected": true,
+      "scope": "project",
+      "transport": "http"
+    }
+  }
+}
