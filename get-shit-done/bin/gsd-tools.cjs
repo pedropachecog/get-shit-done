@@ -1076,6 +1076,59 @@ async function runCommand(command, args, cwd, raw, defaultValue) {
       break;
     }
 
+    case 'agent-dispatch': {
+      const agentName = args[1];
+      if (!agentName) {
+        error('Usage: gsd-tools agent-dispatch <agent-name> --phase N [--query Q]');
+      }
+      const { phase: phaseNum, query } = parseNamedArgs(args, ['phase', 'query']);
+      if (!phaseNum) {
+        error('Missing required --phase argument');
+      }
+
+      const agentsDir = path.join(cwd, 'agents');
+      const agentPath = path.join(agentsDir, `${agentName}.md`);
+
+      if (!fs.existsSync(agentPath)) {
+        error(`Agent file not found: ${agentPath}`);
+      }
+
+      const content = fs.readFileSync(agentPath, 'utf-8');
+      const frontmatterMatch = content.match(/^---[\r\n]([\s\S]*?)[\r\n]---/);
+      if (!frontmatterMatch) {
+        error(`Invalid agent frontmatter in ${agentPath}`);
+      }
+
+      const frontmatterBlock = frontmatterMatch[1];
+      const fields = {};
+      for (const line of frontmatterBlock.split('\n')) {
+        const colonIdx = line.indexOf(':');
+        if (colonIdx === -1) continue;
+        const key = line.substring(0, colonIdx).trim();
+        const value = line.substring(colonIdx + 1).trim();
+        if (key && value) {
+          fields[key] = value;
+        }
+      }
+
+      const toolsMatch = content.match(/^tools:\s*(.+)$/m);
+      const tools = toolsMatch ? toolsMatch[1].split(',').map(t => t.trim()).filter(t => t) : [];
+      const mcpTools = tools.filter(t => t.startsWith('mcp__'));
+
+      const dispatchContext = {
+        agent: agentName,
+        phase: phaseNum,
+        query: query || null,
+        tools: tools,
+        mcpTools: mcpTools,
+        description: fields.description || null,
+        color: fields.color || null,
+      };
+
+      console.log(JSON.stringify(dispatchContext, null, 2));
+      break;
+    }
+
     default:
       error(`Unknown command: ${command}`);
   }
