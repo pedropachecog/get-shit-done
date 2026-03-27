@@ -8,9 +8,7 @@
 
 **Solves context rot while making direct repo usage the primary install path for this fork.**
 
-[![npm version](https://img.shields.io/npm/v/get-shit-done-cc?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/get-shit-done-cc)
-[![npm downloads](https://img.shields.io/npm/dm/get-shit-done-cc?style=for-the-badge&logo=npm&logoColor=white&color=CB3837)](https://www.npmjs.com/package/get-shit-done-cc)
-[![Tests](https://img.shields.io/github/actions/workflow/status/gsd-build/get-shit-done/test.yml?branch=main&style=for-the-badge&logo=github&label=Tests)](https://github.com/gsd-build/get-shit-done/actions/workflows/test.yml)
+[![Tests](https://img.shields.io/github/actions/workflow/status/pedropachecog/get-shit-done/test.yml?branch=main&style=for-the-badge&logo=github&label=Tests)](https://github.com/pedropachecog/get-shit-done/actions/workflows/test.yml)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/gsd)
 [![X (Twitter)](https://img.shields.io/badge/X-@gsd__foundation-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/gsd_foundation)
 [![$GSD Token](https://img.shields.io/badge/$GSD-Dexscreener-1C1C1C?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIxMCIgZmlsbD0iIzAwRkYwMCIvPjwvc3ZnPg==&logoColor=00FF00)](https://dexscreener.com/solana/dwudwjvan7bzkw9zwlbyv6kspdlvhwzrqy6ebk8xzxkv)
@@ -22,10 +20,10 @@
 ```bash
 git clone https://github.com/pedropachecog/get-shit-done.git
 cd get-shit-done
-node bin/install.js --claude --local
+node bin/install.js --claude --global
 ```
 
-**Works on Mac, Windows, and Linux. npm install remains available as a secondary path.**
+**Works on Mac, Windows, and Linux.**
 
 <br>
 
@@ -79,21 +77,30 @@ People who want to describe what they want and have it built correctly — witho
 
 ## Getting Started
 
-Use the direct repo path first for this fork:
+Clone the repo and install:
 
 ```bash
 git clone https://github.com/pedropachecog/get-shit-done.git
 cd get-shit-done
-node bin/install.js --claude --local
+node bin/install.js --claude --global
 ```
 
-This is the primary Claude Code path for GSDL-CC in v1. It keeps the install local to the repo, works well in local or container environments, and does not require paid search or docs subscriptions just to get started.
+**Installation modes:**
+- **`--global`** (recommended): Installs to `~/.claude/` — available in all projects
+- **`--local`**: Installs to `./.claude/` in current directory — only available in that project
 
-If you prefer the packaged installer, `npx get-shit-done-cc@latest` is still available as a secondary path.
+**Runtime options:**
+- `--claude` (default): Claude Code
+- `--gemini`: Gemini CLI
+- `--codex`: GitHub Codex
+- `--opencode`: OpenCode
+- `--copilot`: GitHub Copilot
+- `--cursor`: Cursor
+- `--windsurf`: Windsurf
+- `--antigravity`: Antigravity
+- `--all`: Install for all runtimes
 
-The installer prompts you to choose:
-1. **Runtime** — Claude Code first, with OpenCode, Gemini, Codex, Copilot, Cursor, Windsurf, Antigravity, or all still available as secondary runtime targets.
-2. **Location** — Global (all projects) or local (current project only)
+This is the primary install path for GSDL-CC. It works well in local or container environments, and does not require paid search or docs subscriptions just to get started.
 
 Verify with:
 - Claude Code / Gemini: `/gsd:help`
@@ -110,7 +117,9 @@ Verify with:
 GSD evolves fast. Update periodically:
 
 ```bash
-npx get-shit-done-cc@latest
+# From the get-shit-done directory:
+git pull
+node bin/install.js --claude --global
 ```
 
 <details>
