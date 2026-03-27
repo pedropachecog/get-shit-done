@@ -4285,9 +4285,9 @@ function install(isGlobal, runtime = 'claude') {
     fs.writeFileSync(pkgJsonDest, '{"type":"commonjs"}\n');
     console.log(`  ${green}✓${reset} Wrote package.json (CommonJS mode)`);
 
-    // Copy hooks from dist/ (bundled with dependencies)
+    // Copy hooks from hooks/ (bundled with dependencies)
     // Template paths for the target runtime (replaces '.claude' with correct config dir)
-    const hooksSrc = path.join(src, 'hooks', 'dist');
+    const hooksSrc = path.join(src, 'hooks');
     if (fs.existsSync(hooksSrc)) {
       const hooksDest = path.join(targetDir, 'hooks');
       fs.mkdirSync(hooksDest, { recursive: true });
