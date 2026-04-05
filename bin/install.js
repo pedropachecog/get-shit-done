@@ -4418,73 +4418,36 @@ function uninstall(isGlobal, runtime = 'claude') {
       console.log(`  ${green}✓${reset} Removed GSD statusline from settings`);
     }
 
-    // Remove GSD hooks from SessionStart
-    if (settings.hooks && settings.hooks.SessionStart) {
-      const before = settings.hooks.SessionStart.length;
-      settings.hooks.SessionStart = settings.hooks.SessionStart.filter(entry => {
-        if (entry.hooks && Array.isArray(entry.hooks)) {
-          // Filter out GSD hooks
-          const hasGsdHook = entry.hooks.some(h =>
-            h.command && (h.command.includes('gsd-check-update') || h.command.includes('gsd-statusline') || h.command.includes('gsd-session-state'))
-          );
-          return !hasGsdHook;
-        }
-        return true;
-      });
-      if (settings.hooks.SessionStart.length < before) {
-        settingsModified = true;
-        console.log(`  ${green}✓${reset} Removed GSD hooks from settings`);
-      }
-      // Clean up empty array
-      if (settings.hooks.SessionStart.length === 0) {
-        delete settings.hooks.SessionStart;
-      }
-    }
+    // Remove GSD hooks from settings — per-hook granularity to preserve
+    // user hooks that share an entry with a GSD hook (#1755 followup)
+    const isGsdHookCommand = (cmd) =>
+      cmd && (cmd.includes('gsd-check-update') || cmd.includes('gsd-statusline') ||
+        cmd.includes('gsd-session-state') || cmd.includes('gsd-context-monitor') ||
+        cmd.includes('gsd-phase-boundary') || cmd.includes('gsd-prompt-guard') ||
+        cmd.includes('gsd-read-guard') || cmd.includes('gsd-validate-commit') ||
+        cmd.includes('gsd-workflow-guard'));
 
-    // Remove GSD hooks from PostToolUse and AfterTool (Gemini uses AfterTool)
-    for (const eventName of ['PostToolUse', 'AfterTool']) {
+    for (const eventName of ['SessionStart', 'PostToolUse', 'AfterTool', 'PreToolUse', 'BeforeTool']) {
       if (settings.hooks && settings.hooks[eventName]) {
-        const before = settings.hooks[eventName].length;
-        settings.hooks[eventName] = settings.hooks[eventName].filter(entry => {
-          if (entry.hooks && Array.isArray(entry.hooks)) {
-            const hasGsdHook = entry.hooks.some(h =>
-              h.command && (h.command.includes('gsd-context-monitor') || h.command.includes('gsd-phase-boundary'))
-            );
-            return !hasGsdHook;
-          }
-          return true;
-        });
-        if (settings.hooks[eventName].length < before) {
+        const before = JSON.stringify(settings.hooks[eventName]);
+        settings.hooks[eventName] = settings.hooks[eventName]
+          .map(entry => {
+            if (!entry.hooks || !Array.isArray(entry.hooks)) return null;
+            // Filter out individual GSD hooks, keep user hooks
+            entry.hooks = entry.hooks.filter(h => !isGsdHookCommand(h.command));
+            return entry.hooks.length > 0 ? entry : null;
+          })
+          .filter(Boolean);
+        if (JSON.stringify(settings.hooks[eventName]) !== before) {
           settingsModified = true;
-          console.log(`  ${green}✓${reset} Removed context monitor hook from settings`);
         }
         if (settings.hooks[eventName].length === 0) {
           delete settings.hooks[eventName];
         }
       }
     }
-
-    // Remove GSD hooks from PreToolUse and BeforeTool (Gemini uses BeforeTool)
-    for (const eventName of ['PreToolUse', 'BeforeTool']) {
-      if (settings.hooks && settings.hooks[eventName]) {
-        const before = settings.hooks[eventName].length;
-        settings.hooks[eventName] = settings.hooks[eventName].filter(entry => {
-          if (entry.hooks && Array.isArray(entry.hooks)) {
-            const hasGsdHook = entry.hooks.some(h =>
-              h.command && (h.command.includes('gsd-prompt-guard') || h.command.includes('gsd-read-guard') || h.command.includes('gsd-validate-commit'))
-            );
-            return !hasGsdHook;
-          }
-          return true;
-        });
-        if (settings.hooks[eventName].length < before) {
-          settingsModified = true;
-          console.log(`  ${green}✓${reset} Removed GSD pre-tool guard hooks from settings`);
-        }
-        if (settings.hooks[eventName].length === 0) {
-          delete settings.hooks[eventName];
-        }
-      }
+    if (settingsModified) {
+      console.log(`  ${green}✓${reset} Removed GSD hooks from settings`);
     }
 
     // Clean up empty hooks object
@@ -5467,6 +5430,13 @@ function install(isGlobal, runtime = 'claude') {
         `[[hooks]]${eol}` +
         `event = "SessionStart"${eol}` +
         `command = "node ${updateCheckScript}"${eol}`;
+
+      // Migrate legacy gsd-update-check entries from prior installs (#1755 followup)
+      // Remove stale hook blocks that used the inverted filename or wrong path
+      if (configContent.includes('gsd-update-check')) {
+        configContent = configContent.replace(/\n# GSD Hooks\n\[\[hooks\]\]\nevent = "SessionStart"\ncommand = "node [^\n]*gsd-update-check\.js"\n/g, '\n');
+        configContent = configContent.replace(/\r\n# GSD Hooks\r\n\[\[hooks\]\]\r\nevent = "SessionStart"\r\ncommand = "node [^\r\n]*gsd-update-check\.js"\r\n/g, '\r\n');
+      }
 
       if (hasEnabledCodexHooksFeature(configContent) && !configContent.includes('gsd-check-update')) {
         configContent += hookBlock;
