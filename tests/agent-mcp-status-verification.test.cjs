@@ -145,12 +145,12 @@ describe('MCP-STATUS-DISPATCH: Dispatch context includes MCP availability', () =
 
     // Verify specific MCP tools are present
     const hasSearxng = dispatchContext.mcpTools.some(t => t.includes('searxng'));
-    const hasContext7 = dispatchContext.mcpTools.some(t => t.includes('context7'));
+    const hasContext7 = dispatchContext.mcpTools.some(t => t.includes('context'));
 
     assert.ok(hasSearxng,
       'Dispatch context should include searxng MCP tools');
     assert.ok(hasContext7,
-      'Dispatch context should include context7 MCP tools');
+      'Dispatch context should include context MCP tools');
   });
 
   it('dispatch context distinguishes between MCP and non-MCP tools', () => {
@@ -192,7 +192,7 @@ describe('MCP-MOCK-TRACKER: MCP mock utility functions', () => {
 
     const mockList = JSON.stringify([
       { name: 'searxng', connected: true, scope: 'user' },
-      { name: 'context7', connected: false, scope: 'project' }
+      { name: 'context', connected: false, scope: 'project' }
     ]);
 
     tracker.injectMcpList(mockList);

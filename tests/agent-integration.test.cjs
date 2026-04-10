@@ -105,7 +105,7 @@ describe('INTEGRATION-01: Tool usage documentation verification', () => {
     // Create mock output with MCP tools
     const mockMd = createMockResearchOutput({
       hasTools: true,
-      tools: ['mcp__searxng__searxng_web_search', 'mcp__context7__query-docs'],
+      tools: ['mcp__searxng__searxng_web_search', 'mcp__context__query-docs'],
     });
     const researchSection = parseResearchSection(mockMd);
     const validation = validateToolDocumentation(researchSection);
@@ -220,7 +220,7 @@ describe('End-to-end integration flow', () => {
       hasTools: true,
       hasFallback: false,
       hasGaps: true,
-      tools: ['mcp__searxng__searxng_web_search', 'mcp__searxng__web_url_read', 'mcp__context7__query-docs'],
+      tools: ['mcp__searxng__searxng_web_search', 'mcp__searxng__web_url_read', 'mcp__context__query-docs'],
     });
 
     // Step 2: Parse with parseResearchSection

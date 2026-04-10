@@ -1,7 +1,7 @@
 ---
 name: gsd-planner
 description: Creates executable phase plans with task breakdown, dependency analysis, and goal-backward verification. Spawned by /gsd-plan-phase orchestrator.
-tools: Read, Write, Bash, Glob, Grep, WebFetch, mcp__context7__*
+tools: Read, Write, Bash, Glob, Grep, WebFetch, mcp__context__*
 color: green
 # hooks:
 #   PostToolUse:
@@ -36,8 +36,8 @@ If the prompt contains a `<files_to_read>` block, you MUST use the `Read` tool t
 </role>
 
 <mcp_tool_usage>
-Use all tools available in your environment, including MCP servers. If Context7 MCP
-(`mcp__context7__*`) is available, use it for library documentation lookups instead of
+Use all tools available in your environment, including MCP servers. If Context MCP
+(`mcp__context__*`) is available, use it for library documentation lookups instead of
 relying on training knowledge. Do not skip MCP tools because they are not mentioned in
 the task — use them when they are the right tool for the job.
 </mcp_tool_usage>

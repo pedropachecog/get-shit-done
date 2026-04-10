@@ -8,7 +8,7 @@
  * Requirements covered:
  * - DISPATCH-01: CLI agent-dispatch outputs dispatch context with correct fields
  * - DISPATCH-02: Dispatch context includes searxng tools when searxng fixture loaded
- * - DISPATCH-03: Dispatch context includes context7 tools when context fixture loaded
+ * - DISPATCH-03: Dispatch context includes context tools when context fixture loaded
  * - DISPATCH-04: Dispatch context behavior when no MCP servers configured
  */
 
@@ -180,10 +180,10 @@ describe('DISPATCH-02: dispatch context includes searxng tools when searxng-only
   });
 });
 
-// ─── DISPATCH-03: context7 MCP tools included when available ──────────────────
+// ─── DISPATCH-03: context MCP tools included when available ──────────────────
 
-describe('DISPATCH-03: dispatch context includes context7 tools when searxng-and-context fixture loaded', () => {
-  test('dispatch context includes mcp__context7__* tools when searxng-and-context fixture loaded', () => {
+describe('DISPATCH-03: dispatch context includes context tools when searxng-and-context fixture loaded', () => {
+  test('dispatch context includes mcp__context__* tools when searxng-and-context fixture loaded', () => {
     const tmpDir = createTempDir('dispatch-test-');
     try {
       setupTestEnvironment(tmpDir, 'searxng-and-context');
@@ -196,18 +196,18 @@ describe('DISPATCH-03: dispatch context includes context7 tools when searxng-and
       assert.ok(result.success, 'agent-dispatch command should succeed');
       const output = JSON.parse(result.output);
 
-      // Assert that mcpTools includes at least one context7 tool
-      const hasContext7Tool = output.mcpTools.some(t => t.startsWith('mcp__context7__'));
+      // Assert that mcpTools includes at least one context tool
+      const hasContext7Tool = output.mcpTools.some(t => t.startsWith('mcp__context__'));
       assert.ok(
         hasContext7Tool,
-        'dispatch context mcpTools must include mcp__context7__* tools when context fixture is loaded'
+        'dispatch context mcpTools must include mcp__context__* tools when context fixture is loaded'
       );
     } finally {
       cleanup(tmpDir);
     }
   });
 
-  test('dispatch context includes both searxng and context7 tools when both fixtures available', () => {
+  test('dispatch context includes both searxng and context tools when both fixtures available', () => {
     const tmpDir = createTempDir('dispatch-test-');
     try {
       setupTestEnvironment(tmpDir, 'searxng-and-context');
@@ -227,11 +227,11 @@ describe('DISPATCH-03: dispatch context includes context7 tools when searxng-and
         'dispatch context must include mcp__searxng__* tools'
       );
 
-      // Assert that mcpTools includes context7 tools
-      const hasContext7Tool = output.mcpTools.some(t => t.startsWith('mcp__context7__'));
+      // Assert that mcpTools includes context tools
+      const hasContext7Tool = output.mcpTools.some(t => t.startsWith('mcp__context__'));
       assert.ok(
         hasContext7Tool,
-        'dispatch context must include mcp__context7__* tools'
+        'dispatch context must include mcp__context__* tools'
       );
     } finally {
       cleanup(tmpDir);
@@ -357,7 +357,7 @@ describe('DISPATCH-04: dispatch context behavior when no MCP servers configured'
       // The tools field contains all tools declared in agent frontmatter
       // including MCP tools - this proves the agent knows what it WANTS
       const hasSearxngDeclaration = output.tools.some(t => t.startsWith('mcp__searxng__'));
-      const hasContext7Declaration = output.tools.some(t => t.startsWith('mcp__context7__'));
+      const hasContext7Declaration = output.tools.some(t => t.startsWith('mcp__context__'));
 
       assert.ok(
         hasSearxngDeclaration,
@@ -365,7 +365,7 @@ describe('DISPATCH-04: dispatch context behavior when no MCP servers configured'
       );
       assert.ok(
         hasContext7Declaration,
-        'agent tools must include mcp__context7__* declarations regardless of MCP availability'
+        'agent tools must include mcp__context__* declarations regardless of MCP availability'
       );
     } finally {
       cleanup(tmpDir);

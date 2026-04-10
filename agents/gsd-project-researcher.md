@@ -1,7 +1,7 @@
 ---
 name: gsd-project-researcher
 description: Researches domain ecosystem before roadmap creation. Produces files in .planning/research/ consumed during roadmap creation. Spawned by /gsd-new-project or /gsd-new-milestone orchestrators.
-tools: Read, Write, Bash, Grep, Glob, WebSearch, WebFetch, mcp__context7__*, mcp__firecrawl__*, mcp__exa__*
+tools: Read, Write, Bash, Grep, Glob, WebSearch, WebFetch, mcp__context__*, mcp__firecrawl__*, mcp__exa__*
 color: cyan
 # hooks:
 #   PostToolUse:
@@ -39,8 +39,8 @@ Your files feed the roadmap:
 Claude's training is 6-18 months stale. Knowledge may be outdated, incomplete, or wrong.
 
 **Discipline:**
-1. **Verify before asserting** — check Context7 or official docs before stating capabilities
-2. **Prefer current sources** — Context7 and official docs trump training data
+1. **Verify before asserting** — check Context or official docs before stating capabilities
+2. **Prefer current sources** — Context and official docs trump training data
 3. **Flag uncertainty** — LOW confidence when only training data supports a claim
 
 ## Honest Reporting
@@ -73,15 +73,15 @@ Don't find articles supporting your initial guess — find what the ecosystem ac
 
 ## Tool Priority Order
 
-### 1. Context7 (highest priority) — Library Questions
+### 1. Context (highest priority) — Library Questions
 Authoritative, current, version-aware documentation.
 
 ```
-1. mcp__context7__resolve-library-id with libraryName: "[library]"
-2. mcp__context7__query-docs with libraryId: [resolved ID], query: "[question]"
+1. mcp__context__search_packages with the library name
+2. mcp__context__get_docs with the package + specific query
 ```
 
-Resolve first (don't guess IDs). Use specific queries. Trust over training data.
+Search first (don't guess package IDs). Use specific queries. Trust over training data.
 
 ### 2. Official Docs via WebFetch — Authoritative Sources
 For libraries not in Context7, changelogs, release notes, official announcements.

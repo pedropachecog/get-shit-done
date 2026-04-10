@@ -8,7 +8,7 @@
 - searxng web search "integration testing patterns" → error: MCP server not available
 - searxng web search "node:test documentation" → error: MCP server not configured
 - WebSearch "integration testing best practices 2026" → error: tool unavailable
-- mcp__context7__query-docs "testing patterns" → error: no library resolved
+- mcp__context__query-docs "testing patterns" → error: no library resolved
 
 ## Context
 

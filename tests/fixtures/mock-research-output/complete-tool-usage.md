@@ -27,7 +27,7 @@ Research on integration testing patterns for validating agent structured returns
 **Tools Used:**
 - mcp__searxng__searxng_web_search: Search for integration testing patterns
 - mcp__searxng__web_url_read: Read Node.js testing documentation
-- mcp__context7__query-docs: Query for node:test API documentation
+- mcp__context__get_docs: Query for node:test API documentation
 
 **Sources Consulted:**
 1. [Node.js Test Runner Documentation] - https://nodejs.org/api/test.html - Official documentation for built-in test framework

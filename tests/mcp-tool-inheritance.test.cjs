@@ -16,7 +16,7 @@ describe('MCP tool usage in GSD agents', () => {
       const content = fs.readFileSync(agentFile, 'utf-8');
       const hasMcpGuidance =
         content.toLowerCase().includes('mcp') ||
-        content.includes('context7') ||
+        content.includes('context') ||
         content.includes('available tools') ||
         content.includes('MCP tool');
       assert.ok(hasMcpGuidance, `${name} should mention MCP tool availability/usage`);

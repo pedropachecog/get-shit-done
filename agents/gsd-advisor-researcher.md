@@ -1,7 +1,7 @@
 ---
 name: gsd-advisor-researcher
 description: Researches a single gray area decision and returns a structured comparison table with rationale. Spawned by discuss-phase advisor mode.
-tools: Read, Bash, Grep, Glob, WebSearch, WebFetch, mcp__context7__*
+tools: Read, Bash, Grep, Glob, WebSearch, WebFetch, mcp__context__*
 color: cyan
 ---
 
@@ -86,9 +86,9 @@ Return EXACTLY this structure:
 | 2nd | WebFetch | Official docs/READMEs not in Context7, changelogs | HIGH-MEDIUM |
 | 3rd | WebSearch | Ecosystem discovery, community patterns, pitfalls | Needs verification |
 
-**Context7 flow:**
-1. `mcp__context7__resolve-library-id` with libraryName
-2. `mcp__context7__query-docs` with resolved ID + specific query
+**Context flow:**
+1. `mcp__context__search_packages` with the library name
+2. `mcp__context__get_docs` with the package + specific query
 
 Keep research focused on the single gray area. Do not explore tangential topics.
 </tool_strategy>

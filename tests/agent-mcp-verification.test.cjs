@@ -1,7 +1,7 @@
 /**
  * Agent MCP Tool Verification Tests
  *
- * Verifies that agent frontmatter declares required MCP tools (searxng, context7)
+ * Verifies that agent frontmatter declares required MCP tools (searxng, context)
  * and agent instructions reference correct MCP tool usage patterns.
  *
  * Requirements covered:
@@ -29,21 +29,21 @@ describe('MCP-TOOLS: MCP tool declarations in frontmatter', () => {
     );
   });
 
-  test('gsd-phase-researcher frontmatter declares context7 MCP tools (mcp__context7__*)', () => {
+  test('gsd-phase-researcher frontmatter declares context MCP tools (mcp__context__*)', () => {
     const tools = extractAgentTools(path.join(AGENTS_DIR, 'gsd-phase-researcher.md'));
-    const hasContext7 = tools.some(t => t.startsWith('mcp__context7__'));
+    const hasContext7 = tools.some(t => t.startsWith('mcp__context__'));
     assert.ok(
       hasContext7,
-      'gsd-phase-researcher must declare context7 MCP tools (mcp__context7__*) in frontmatter tools: field'
+      'gsd-phase-researcher must declare context MCP tools (mcp__context__*) in frontmatter tools: field'
     );
   });
 
-  test('gsd-project-researcher frontmatter declares context7 MCP tools (mcp__context7__*)', () => {
+  test('gsd-project-researcher frontmatter declares context MCP tools (mcp__context__*)', () => {
     const tools = extractAgentTools(path.join(AGENTS_DIR, 'gsd-project-researcher.md'));
-    const hasContext7 = tools.some(t => t.startsWith('mcp__context7__'));
+    const hasContext7 = tools.some(t => t.startsWith('mcp__context__'));
     assert.ok(
       hasContext7,
-      'gsd-project-researcher must declare context7 MCP tools (mcp__context7__*) in frontmatter tools: field'
+      'gsd-project-researcher must declare context MCP tools (mcp__context__*) in frontmatter tools: field'
     );
   });
 });
@@ -77,17 +77,17 @@ describe('MCP-USAGE: MCP tool usage patterns in instructions', () => {
     );
   });
 
-  test('gsd-phase-researcher contains mcp__context7__resolve-library-id invocation pattern', () => {
+  test('gsd-phase-researcher contains mcp__context__search_packages invocation pattern', () => {
     assert.ok(
-      phaseResearcherContent.includes('mcp__context7__resolve-library-id'),
-      'gsd-phase-researcher must document mcp__context7__resolve-library-id tool invocation pattern'
+      phaseResearcherContent.includes('mcp__context__search_packages'),
+      'gsd-phase-researcher must document mcp__context__search_packages tool invocation pattern'
     );
   });
 
-  test('gsd-phase-researcher contains mcp__context7__query-docs invocation pattern', () => {
+  test('gsd-phase-researcher contains mcp__context__get_docs invocation pattern', () => {
     assert.ok(
-      phaseResearcherContent.includes('mcp__context7__query-docs'),
-      'gsd-phase-researcher must document mcp__context7__query-docs tool invocation pattern'
+      phaseResearcherContent.includes('mcp__context__get_docs'),
+      'gsd-phase-researcher must document mcp__context__get_docs tool invocation pattern'
     );
   });
 
@@ -96,10 +96,10 @@ describe('MCP-USAGE: MCP tool usage patterns in instructions', () => {
     'utf-8'
   );
 
-  test('gsd-project-researcher contains mcp__context7__resolve-library-id invocation pattern', () => {
+  test('gsd-project-researcher contains mcp__context__search_packages invocation pattern', () => {
     assert.ok(
-      projectResearcherContent.includes('mcp__context7__resolve-library-id'),
-      'gsd-project-researcher must document mcp__context7__resolve-library-id tool invocation pattern'
+      projectResearcherContent.includes('mcp__context__search_packages'),
+      'gsd-project-researcher must document mcp__context__search_packages tool invocation pattern'
     );
   });
 });
@@ -154,14 +154,14 @@ describe('MCP-PRIORITY: Tool priority documentation', () => {
     );
   });
 
-  test('gsd-phase-researcher documents Context7 as secondary research source', () => {
+  test('gsd-phase-researcher documents Context as secondary research source', () => {
     const content = fs.readFileSync(
       path.join(AGENTS_DIR, 'gsd-phase-researcher.md'),
       'utf-8'
     );
     assert.ok(
-      content.includes('Context7'),
-      'gsd-phase-researcher must document Context7 as a research source'
+      content.includes('Context'),
+      'gsd-phase-researcher must document Context as a research source'
     );
   });
 });
@@ -186,14 +186,14 @@ describe('MCP-SOURCE-HIERARCHY: Source hierarchy with MCP tools', () => {
     );
   });
 
-  test('gsd-project-researcher source hierarchy includes Context7', () => {
+  test('gsd-project-researcher source hierarchy includes Context', () => {
     const content = fs.readFileSync(
       path.join(AGENTS_DIR, 'gsd-project-researcher.md'),
       'utf-8'
     );
     assert.ok(
-      content.includes('Context7'),
-      'gsd-project-researcher must document Context7 in source hierarchy'
+      content.includes('Context'),
+      'gsd-project-researcher must document Context in source hierarchy'
     );
   });
 });
