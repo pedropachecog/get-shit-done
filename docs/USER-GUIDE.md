@@ -895,12 +895,12 @@ When a workflow fails in a way that isn't obvious -- plans reference nonexistent
 
 **Output:** A diagnostic report written to `.planning/forensics/` with findings and suggested remediation steps.
 
-### Research Stack Preflight (`/gsd:research-status`)
+### Research Stack Preflight (`/gsd-research-status`)
 
 Before running research-heavy workflows, check your local research stack readiness:
 
 ```bash
-/gsd:research-status
+/gsd-research-status
 ```
 
 **Status outputs:**
@@ -920,7 +920,7 @@ Before running research-heavy workflows, check your local research stack readine
 - `project approval required` — Approve the MCP server when prompted
 - `invalid .mcp.json` — Fix JSON syntax errors in your MCP configuration file
 
-Use `/gsd:research-status --raw` for machine-readable JSON output.
+Use `/gsd-research-status --raw` for machine-readable JSON output.
 
 ### Subagent Appears to Fail but Work Was Done
 

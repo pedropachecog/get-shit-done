@@ -97,6 +97,7 @@ describe('detectConfigDir runtime behavior (#1860)', () => {
 
     const result = execFileSync(process.execPath, ['-e', testScript], {
       encoding: 'utf8',
+      env: { ...process.env, CLAUDE_CONFIG_DIR: '' },
     });
 
     const expectedDir = path.join(tmpHome, '.claude');
@@ -133,6 +134,7 @@ describe('detectConfigDir runtime behavior (#1860)', () => {
 
     const result = execFileSync(process.execPath, ['-e', testScript], {
       encoding: 'utf8',
+      env: { ...process.env, CLAUDE_CONFIG_DIR: '' },
     });
 
     const expectedDir = path.join(tmpHome, '.config', 'opencode');

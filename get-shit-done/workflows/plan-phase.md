@@ -250,7 +250,7 @@ Research status: {RESEARCH_STATUS_VALUE}
 
 Options:
 1. Proceed in context-only mode — Plan using existing context and requirements only
-2. Fix research and retry — Run /gsd:research-status for diagnostics
+2. Fix research and retry — Run /gsd-research-status for diagnostics
 3. Abort — Cancel planning
 
 Enter number:
@@ -261,7 +261,7 @@ If TEXT_MODE is false, use AskUserQuestion:
 - question: "Required research is unavailable for Phase {X}. Proceed in context-only mode or fix research first?"
 - options:
   - "Proceed in context-only mode" → Set RESEARCH_STATE="context-only", continue to step 4
-  - "Fix research and retry" → Display `/gsd:research-status ${GSD_WS}`, exit workflow
+  - "Fix research and retry" → Display `/gsd-research-status ${GSD_WS}`, exit workflow
   - "Abort" → Display "Planning cancelled.", exit workflow
 
 If user selects "Proceed in context-only mode":
