@@ -1,6 +1,23 @@
 <div align="center">
 
-# GET SHIT DONE
+# GET SHIT DONE — Claude-First Fork (GSDL-CC)
+
+</div>
+
+> [!NOTE]
+> **This is a fork of [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done).**
+>
+> **Why this fork exists:**
+> - **Claude-first, local-first.** Upstream targets a dozen agent runtimes (Codex, Gemini, Kilo, Cursor, Windsurf, etc.). This fork optimizes for Claude Code as the primary runtime — other runtimes are supported but secondary.
+> - **MCP alignment.** Fork standardizes on the `mcp__context__*` MCP provider (instead of upstream's `mcp__context7__*`) and adds local-first research visibility via `research-status` and `agent-dispatch` tooling.
+> - **Fork-specific additions:** research preflight checks (`--context-only`), integration test suite for agent dispatch, RESEARCH.md fixtures, plus a few hook-path and installer fixes upstream hasn't merged.
+> - **Sync cadence.** Tracks upstream `main` via periodic merges — upstream features land here, fork-specific changes stay local.
+>
+> For the upstream-flavored, multi-runtime version, see [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done). Everything below is upstream documentation and applies to both.
+
+---
+
+<div align="center">
 
 **English** · [Português](README.pt-BR.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja-JP.md) · [한국어](README.ko-KR.md)
 
