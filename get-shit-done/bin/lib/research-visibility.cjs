@@ -221,21 +221,35 @@ function buildResearchVisibilitySnapshot(cwd, options = {}) {
 }
 
 /**
- * Parse plain-text mcp list output (fallback when JSON fails)
+ * Parse plain-text mcp list output (fallback when JSON fails).
+ *
+ * Handles the `claude mcp list` human-readable format:
+ *   name: command-or-url - ✓ Connected
+ *   name: url - ! Needs authentication
+ *   name: command - ✗ Failed to connect
  */
 function parseMcpListPlain(output) {
   const servers = [];
   const lines = output.split('\n').filter(Boolean);
 
-  // Look for patterns like: "searxng - connected (user)" or JSON-like entries
   for (const line of lines) {
-    // Try to extract name and connected status
-    const nameMatch = line.match(/^(\S+)/);
-    if (nameMatch) {
-      const name = nameMatch[1];
-      const connected = line.includes('connected') && !line.includes('disconnected');
-      servers.push({ name, connected });
+    if (line.startsWith('Checking') || line.startsWith('═') || line.startsWith('─')) {
+      continue;
     }
+
+    const sepIdx = line.lastIndexOf(' - ');
+    const colonIdx = line.indexOf(':');
+    if (colonIdx === -1 || sepIdx === -1 || sepIdx < colonIdx) continue;
+
+    const name = line.substring(0, colonIdx).trim();
+    if (!name) continue;
+
+    const status = line.substring(sepIdx + 3);
+    const connected = status.includes('✓') && status.includes('Connected');
+    const needsAuth = status.includes('!') && status.includes('authentication');
+    const failed = status.includes('✗');
+
+    servers.push({ name, connected, needsAuth, failed });
   }
 
   return servers;

@@ -187,4 +187,27 @@ describe('research visibility', () => {
       cleanup(tmpDir);
     }
   });
+
+  test('parses plain-text `claude mcp list` output with mixed statuses', () => {
+    const plainOutput = [
+      'Checking MCP server health…',
+      '',
+      'claude.ai Google Drive: https://drivemcp.googleapis.com/mcp/v1 - ! Needs authentication',
+      'context: context serve - ✓ Connected',
+      'searxng: npx -y mcp-searxng - ✓ Connected',
+      'playwright: npx -y @playwright/mcp --config /home/agent/.playwright-mcp.json - ✗ Failed to connect',
+    ].join('\n');
+
+    const snapshot = buildResearchVisibilitySnapshot('/tmp', {
+      injectClaudeVersion: () => 'claude 2.1.84',
+      injectMcpList: () => plainOutput,
+    });
+
+    assert.strictEqual(snapshot.status, 'degraded');
+    const byName = Object.fromEntries(snapshot.providers.map(p => [p.name, p]));
+    assert.strictEqual(byName['context'].connected, true);
+    assert.strictEqual(byName['searxng'].connected, true);
+    assert.strictEqual(byName['playwright'].connected, false);
+    assert.strictEqual(byName['claude.ai Google Drive'].connected, false);
+  });
 });
