@@ -70,6 +70,9 @@
  *   audit-uat                           Scan all phases for unresolved UAT/verification items
  *   uat render-checkpoint --file <path> Render the current UAT checkpoint block
  *
+ * Open Artifact Audit:
+ *   audit-open [--json]                 Scan all .planning/ artifact types for unresolved items
+ *
  * Intel:
  *   intel query <term>             Query intel files for a term
  *   intel status                   Show intel file freshness
@@ -154,6 +157,10 @@
  *   learnings copy                       Copy from current project's LEARNINGS.md
  *   learnings prune --older-than <dur>   Remove entries older than duration (e.g. 90d)
  *   learnings delete <id>                Delete a learning by ID
+ *
+ * GSD-2 Migration:
+ *   from-gsd2 [--path <dir>] [--force] [--dry-run]
+ *             Import a GSD-2 (.gsd/) project back to GSD v1 (.planning/) format
  */
 
 const fs = require('fs');
@@ -467,6 +474,9 @@ async function runCommand(command, args, cwd, raw, defaultValue) {
       } else if (subcommand === 'sync') {
         const { verify } = parseNamedArgs(args, [], ['verify']);
         state.cmdStateSync(cwd, { verify }, raw);
+      } else if (subcommand === 'prune') {
+        const { 'keep-recent': keepRecent, 'dry-run': dryRun } = parseNamedArgs(args, ['keep-recent'], ['dry-run']);
+        state.cmdStatePrune(cwd, { keepRecent: keepRecent || '3', dryRun: !!dryRun }, raw);
       } else {
         state.cmdStateLoad(cwd, raw);
       }
@@ -635,6 +645,11 @@ async function runCommand(command, args, cwd, raw, defaultValue) {
       break;
     }
 
+    case 'skill-manifest': {
+      init.cmdSkillManifest(cwd, args, raw);
+      break;
+    }
+
     case 'history-digest': {
       commands.cmdHistoryDigest(cwd, raw);
       break;
@@ -700,6 +715,16 @@ async function runCommand(command, args, cwd, raw, defaultValue) {
           }
         }
         phase.cmdPhaseAdd(cwd, descArgs.join(' '), raw, customId);
+      } else if (subcommand === 'add-batch') {
+        // Accepts JSON array of descriptions via --descriptions '[...]' or positional args
+        const descFlagIdx = args.indexOf('--descriptions');
+        let descriptions;
+        if (descFlagIdx !== -1 && args[descFlagIdx + 1]) {
+          try { descriptions = JSON.parse(args[descFlagIdx + 1]); } catch (e) { error('--descriptions must be a JSON array'); }
+        } else {
+          descriptions = args.slice(2).filter(a => a !== '--raw');
+        }
+        phase.cmdPhaseAddBatch(cwd, descriptions, raw);
       } else if (subcommand === 'insert') {
         phase.cmdPhaseInsert(cwd, args[2], args.slice(3).join(' '), raw);
       } else if (subcommand === 'remove') {
@@ -708,7 +733,7 @@ async function runCommand(command, args, cwd, raw, defaultValue) {
       } else if (subcommand === 'complete') {
         phase.cmdPhaseComplete(cwd, args[2], raw);
       } else {
-        error('Unknown phase subcommand. Available: next-decimal, add, insert, remove, complete');
+        error('Unknown phase subcommand. Available: next-decimal, add, add-batch, insert, remove, complete');
       }
       break;
     }
@@ -749,6 +774,18 @@ async function runCommand(command, args, cwd, raw, defaultValue) {
     case 'audit-uat': {
       const uat = require('./lib/uat.cjs');
       uat.cmdAuditUat(cwd, raw);
+      break;
+    }
+
+    case 'audit-open': {
+      const { auditOpenArtifacts, formatAuditReport } = require('./lib/audit.cjs');
+      const includeRaw = args.includes('--json');
+      const result = auditOpenArtifacts(cwd);
+      if (includeRaw) {
+        output(JSON.stringify(result, null, 2), raw);
+      } else {
+        output(formatAuditReport(result), raw);
+      }
       break;
     }
 
@@ -796,13 +833,13 @@ async function runCommand(command, args, cwd, raw, defaultValue) {
       const workflow = args[1];
       switch (workflow) {
         case 'execute-phase': {
-          const { validate: epValidate } = parseNamedArgs(args, [], ['validate']);
-          init.cmdInitExecutePhase(cwd, args[2], raw, { validate: epValidate });
+          const { validate: epValidate, tdd: epTdd } = parseNamedArgs(args, [], ['validate', 'tdd']);
+          init.cmdInitExecutePhase(cwd, args[2], raw, { validate: epValidate, tdd: epTdd });
           break;
         }
         case 'plan-phase': {
-          const { validate: ppValidate } = parseNamedArgs(args, [], ['validate']);
-          init.cmdInitPlanPhase(cwd, args[2], raw, { validate: ppValidate });
+          const { validate: ppValidate, tdd: ppTdd } = parseNamedArgs(args, [], ['validate', 'tdd']);
+          init.cmdInitPlanPhase(cwd, args[2], raw, { validate: ppValidate, tdd: ppTdd });
           break;
         }
         case 'new-project':
@@ -1009,7 +1046,15 @@ async function runCommand(command, args, cwd, raw, defaultValue) {
         core.output(intel.intelQuery(term, planningDir), raw);
       } else if (subcommand === 'status') {
         const planningDir = path.join(cwd, '.planning');
-        core.output(intel.intelStatus(planningDir), raw);
+        const status = intel.intelStatus(planningDir);
+        if (!raw && status.files) {
+          for (const file of Object.values(status.files)) {
+            if (file.updated_at) {
+              file.updated_at = core.timeAgo(new Date(file.updated_at));
+            }
+          }
+        }
+        core.output(status, raw);
       } else if (subcommand === 'diff') {
         const planningDir = path.join(cwd, '.planning');
         core.output(intel.intelDiff(planningDir), raw);
@@ -1032,6 +1077,33 @@ async function runCommand(command, args, cwd, raw, defaultValue) {
         core.output(intel.intelUpdate(planningDir), raw);
       } else {
         error('Unknown intel subcommand. Available: query, status, update, diff, snapshot, patch-meta, validate, extract-exports');
+      }
+      break;
+    }
+
+    // ─── Graphify ──────────────────────────────────────────────────────────
+
+    case 'graphify': {
+      const graphify = require('./lib/graphify.cjs');
+      const subcommand = args[1];
+      if (subcommand === 'query') {
+        const term = args[2];
+        if (!term) error('Usage: gsd-tools graphify query <term>');
+        const budgetIdx = args.indexOf('--budget');
+        const budget = budgetIdx !== -1 ? parseInt(args[budgetIdx + 1], 10) : null;
+        core.output(graphify.graphifyQuery(cwd, term, { budget }), raw);
+      } else if (subcommand === 'status') {
+        core.output(graphify.graphifyStatus(cwd), raw);
+      } else if (subcommand === 'diff') {
+        core.output(graphify.graphifyDiff(cwd), raw);
+      } else if (subcommand === 'build') {
+        if (args[2] === 'snapshot') {
+          core.output(graphify.writeSnapshot(cwd), raw);
+        } else {
+          core.output(graphify.graphifyBuild(cwd), raw);
+        }
+      } else {
+        error('Unknown graphify subcommand. Available: build, query, status, diff');
       }
       break;
     }
@@ -1128,6 +1200,14 @@ async function runCommand(command, args, cwd, raw, defaultValue) {
       };
 
       console.log(JSON.stringify(dispatchContext, null, 2));
+      break;
+    }
+
+    // ─── GSD-2 Reverse Migration ───────────────────────────────────────────
+
+    case 'from-gsd2': {
+      const gsd2Import = require('./lib/gsd2-import.cjs');
+      gsd2Import.cmdFromGsd2(args.slice(1), cwd, raw);
       break;
     }
 

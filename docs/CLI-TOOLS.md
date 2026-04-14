@@ -21,6 +21,7 @@ node gsd-tools.cjs <command> [args] [--raw] [--cwd <path>]
 |------|-------------|
 | `--raw` | Machine-readable output (JSON or plain text, no formatting) |
 | `--cwd <path>` | Override working directory (for sandboxed subagents) |
+| `--ws <name>` | Target a specific workstream context (SDK only) |
 
 ---
 
@@ -159,41 +160,7 @@ Agent names: `gsd-planner`, `gsd-executor`, `gsd-phase-researcher`, `gsd-project
 
 ---
 
-## Research Visibility
-
-Check local research stack readiness and active MCP providers:
-
-```bash
-# Human-readable output
-node gsd-tools.cjs research-status
-
-# Machine-readable JSON output
-node gsd-tools.cjs research-status --raw
-```
-
-**Output fields:**
-| Field | Type | Description |
-|-------|------|-------------|
-| `status` | string | `ready`, `degraded`, or `blocked` |
-| `checked_at` | string | ISO timestamp of the check |
-| `providers` | array | List of MCP providers with name, scope, transport, connectivity |
-| `active_scopes` | array | Unique scopes of connected providers (`user`, `project`, `local`) |
-| `warnings` | array | Non-blocking issues (e.g., provider configured but not connected) |
-| `remediations` | array | Actionable steps to resolve blocked/degraded status |
-
-**Status rules:**
-- `ready` — At least one connected local-first MCP provider (e.g., searxng)
-- `blocked` — Claude CLI unavailable, no MCP configured, or zero connected providers
-- `degraded` — At least one provider present but warnings or remediations exist
-
-**Remediation codes:**
-| Code | Meaning |
-|------|---------|
-| `CLI_MISSING` | Claude CLI not found or not executable |
-| `NO_MCP_CONFIGURED` | No MCP servers in configuration files |
-| `ZERO_CONNECTED` | MCP servers configured but none are connected |
-| `PROVIDER_DISCONNECTED` | Provider configured but server is unavailable |
-| `INVALID_MCP_JSON` | JSON syntax error in `.mcp.json` or `~/.claude.json` |
+## Verification Commands
 
 Validate plans, phases, references, and commits.
 
@@ -309,6 +276,10 @@ node gsd-tools.cjs init todos [area]
 node gsd-tools.cjs init milestone-op
 node gsd-tools.cjs init map-codebase
 node gsd-tools.cjs init progress
+
+# Workstream-scoped init (SDK --ws flag)
+node gsd-tools.cjs init execute-phase <phase> --ws <name>
+node gsd-tools.cjs init plan-phase <phase> --ws <name>
 ```
 
 **Large payload handling:** When output exceeds ~50KB, the CLI writes to a temp file and returns `@file:/tmp/gsd-init-XXXXX.json`. Workflows check for the `@file:` prefix and read from disk:
@@ -330,6 +301,22 @@ node gsd-tools.cjs milestone complete <version> [--name <name>] [--archive-phase
 node gsd-tools.cjs requirements mark-complete <ids>
 # Accepts: REQ-01,REQ-02 or REQ-01 REQ-02 or [REQ-01, REQ-02]
 ```
+
+---
+
+## Skill Manifest
+
+Pre-compute and cache skill discovery for faster command loading.
+
+```bash
+# Generate skill manifest (writes to .claude/skill-manifest.json)
+node gsd-tools.cjs skill-manifest
+
+# Generate with custom output path
+node gsd-tools.cjs skill-manifest --output <path>
+```
+
+Returns JSON mapping of all available GSD skills with their metadata (name, description, file path, argument hints). Used by the installer and session-start hooks to avoid repeated filesystem scans.
 
 ---
 

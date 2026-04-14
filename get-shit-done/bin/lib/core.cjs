@@ -159,14 +159,25 @@ function findProjectRoot(startDir) {
  * @param {number} opts.maxAgeMs - max age in ms before removal (default: 5 min)
  * @param {boolean} opts.dirsOnly - if true, only remove directories (default: false)
  */
+/**
+ * Dedicated GSD temp directory: path.join(os.tmpdir(), 'gsd').
+ * Created on first use. Keeps GSD temp files isolated from the system
+ * temp directory so reap scans only GSD files (#1975).
+ */
+const GSD_TEMP_DIR = path.join(require('os').tmpdir(), 'gsd');
+
+function ensureGsdTempDir() {
+  fs.mkdirSync(GSD_TEMP_DIR, { recursive: true });
+}
+
 function reapStaleTempFiles(prefix = 'gsd-', { maxAgeMs = 5 * 60 * 1000, dirsOnly = false } = {}) {
   try {
-    const tmpDir = require('os').tmpdir();
+    ensureGsdTempDir();
     const now = Date.now();
-    const entries = fs.readdirSync(tmpDir);
+    const entries = fs.readdirSync(GSD_TEMP_DIR);
     for (const entry of entries) {
       if (!entry.startsWith(prefix)) continue;
-      const fullPath = path.join(tmpDir, entry);
+      const fullPath = path.join(GSD_TEMP_DIR, entry);
       try {
         const stat = fs.statSync(fullPath);
         if (now - stat.mtimeMs > maxAgeMs) {
@@ -195,7 +206,8 @@ function output(result, raw, rawValue) {
     // Write to tmpfile and output the path prefixed with @file: so callers can detect it.
     if (json.length > 50000) {
       reapStaleTempFiles();
-      const tmpPath = path.join(require('os').tmpdir(), `gsd-${Date.now()}.json`);
+      ensureGsdTempDir();
+      const tmpPath = path.join(GSD_TEMP_DIR, `gsd-${Date.now()}.json`);
       fs.writeFileSync(tmpPath, json, 'utf-8');
       data = '@file:' + tmpPath;
     } else {
@@ -239,6 +251,7 @@ const CONFIG_DEFAULTS = {
   plan_checker: true,
   verifier: true,
   nyquist_validation: true,
+  ai_integration_phase: true,
   parallelization: true,
   brave_search: false,
   firecrawl: false,
@@ -312,7 +325,7 @@ function loadConfig(cwd) {
       // Section containers that hold nested sub-keys
       'git', 'workflow', 'planning', 'hooks', 'features',
       // Internal keys loadConfig reads but config-set doesn't expose
-      'model_overrides', 'agent_skills', 'context_window', 'resolve_model_ids',
+      'model_overrides', 'agent_skills', 'context_window', 'resolve_model_ids', 'claude_md_path',
       // Deprecated keys (still accepted for migration, not in config-set)
       'depth', 'multiRepo',
     ]);
@@ -362,6 +375,7 @@ function loadConfig(cwd) {
       brave_search: get('brave_search') ?? defaults.brave_search,
       firecrawl: get('firecrawl') ?? defaults.firecrawl,
       exa_search: get('exa_search') ?? defaults.exa_search,
+      tdd_mode: get('tdd_mode', { section: 'workflow', field: 'tdd_mode' }) ?? false,
       text_mode: get('text_mode', { section: 'workflow', field: 'text_mode' }) ?? defaults.text_mode,
       sub_repos: get('sub_repos', { section: 'planning', field: 'sub_repos' }) ?? defaults.sub_repos,
       resolve_model_ids: get('resolve_model_ids') ?? defaults.resolve_model_ids,
@@ -373,6 +387,7 @@ function loadConfig(cwd) {
       agent_skills: parsed.agent_skills || {},
       manager: parsed.manager || {},
       response_language: get('response_language') || null,
+      claude_md_path: get('claude_md_path') || null,
     };
   } catch {
     // Fall back to ~/.gsd/defaults.json only for truly pre-project contexts (#1683)
@@ -691,19 +706,23 @@ function planningRoot(cwd) {
 }
 
 /**
- * Get common .planning file paths, workstream-aware.
- * Scoped paths (state, roadmap, phases, requirements) resolve to the active workstream.
- * Shared paths (project, config) always resolve to the root .planning/.
+ * Get common .planning file paths, project-and-workstream-aware.
+ *
+ * All paths route through planningDir(cwd, ws), which honors the GSD_PROJECT
+ * env var and active workstream. This matches loadConfig() above (line 256),
+ * which has always read config.json via planningDir(cwd). Previously project
+ * and config were resolved against the unrouted .planning/ root, which broke
+ * `gsd-tools config-get` in multi-project layouts (the CRUD writers and the
+ * reader pointed at different files).
  */
 function planningPaths(cwd, ws) {
   const base = planningDir(cwd, ws);
-  const root = path.join(cwd, '.planning');
   return {
     planning: base,
     state: path.join(base, 'STATE.md'),
     roadmap: path.join(base, 'ROADMAP.md'),
-    project: path.join(root, 'PROJECT.md'),
-    config: path.join(root, 'config.json'),
+    project: path.join(base, 'PROJECT.md'),
+    config: path.join(base, 'config.json'),
     phases: path.join(base, 'phases'),
     requirements: path.join(base, 'REQUIREMENTS.md'),
   };
@@ -900,7 +919,10 @@ function normalizePhaseName(phase) {
   const match = stripped.match(/^(\d+)([A-Z])?((?:\.\d+)*)/i);
   if (match) {
     const padded = match[1].padStart(2, '0');
-    const letter = match[2] ? match[2].toUpperCase() : '';
+    // Preserve original case of letter suffix (#1962).
+    // Uppercasing causes directory/roadmap mismatches on case-sensitive filesystems
+    // (e.g., "16c" in ROADMAP.md → directory "16C-name" → progress can't match).
+    const letter = match[2] || '';
     const decimal = match[3] || '';
     return padded + letter + decimal;
   }
@@ -1538,6 +1560,32 @@ function atomicWriteFileSync(filePath, content, encoding = 'utf-8') {
   }
 }
 
+/**
+ * Format a Date as a fuzzy relative time string (e.g. "5 minutes ago").
+ * @param {Date} date
+ * @returns {string}
+ */
+function timeAgo(date) {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 5) return 'just now';
+  if (seconds < 60) return `${seconds} seconds ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes === 1) return '1 minute ago';
+  if (minutes < 60) return `${minutes} minutes ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours === 1) return '1 hour ago';
+  if (hours < 24) return `${hours} hours ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return '1 day ago';
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  if (months === 1) return '1 month ago';
+  if (months < 12) return `${months} months ago`;
+  const years = Math.floor(days / 365);
+  if (years === 1) return '1 year ago';
+  return `${years} years ago`;
+}
+
 module.exports = {
   output,
   error,
@@ -1570,6 +1618,7 @@ module.exports = {
   findProjectRoot,
   detectSubRepos,
   reapStaleTempFiles,
+  GSD_TEMP_DIR,
   MODEL_ALIAS_MAP,
   CONFIG_DEFAULTS,
   planningDir,
@@ -1584,4 +1633,5 @@ module.exports = {
   getAgentsDir,
   checkAgentsInstalled,
   atomicWriteFileSync,
+  timeAgo,
 };

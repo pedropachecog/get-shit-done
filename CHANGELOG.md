@@ -6,6 +6,49 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`@gsd-build/sdk` — Phase 1 typed query foundation** — Registry-based `gsd-sdk query` command, classified errors (`GSDQueryError`), and unit-tested handlers under `sdk/src/query/` (state, roadmap, phase lifecycle, init, config, validation, and related domains). Implements incremental SDK-first migration scope approved in #2083; builds on validated work from #2007 / `feat/sdk-foundation` without migrating workflows or removing `gsd-tools.cjs` in this phase.
+- **Flow diagram directive for phase researcher** — `gsd-phase-researcher` now enforces data-flow architecture diagrams instead of file-listing diagrams. Language-agnostic directive added to agent prompt and research template. (#2139)
+
+### Fixed
+
+- **SDK query layer (PR review hardening)** — `commit-to-subrepo` uses realpath-aware path containment and sanitized commit messages; `state.planned-phase` uses the STATE.md lockfile; `verifyKeyLinks` mitigates ReDoS on frontmatter patterns; frontmatter handlers resolve paths under the real project root; phase directory names reject `..` and separators; `gsd-sdk` restores strict CLI parsing by stripping `--pick` before `parseArgs`; `QueryRegistry.commands()` for enumeration; `todoComplete` uses static error imports.
+
+### Changed
+
+- **SDK query follow-up (tests, docs, registry)** — Expanded `QUERY_MUTATION_COMMANDS` for event emission; stale lock cleanup uses PID liveness (`process.kill(pid, 0)`) when a lock file exists; `searchJsonEntries` is depth-bounded (`MAX_JSON_SEARCH_DEPTH`); removed unnecessary `readdirSync`/`Dirent` casts across query handlers; added `sdk/src/query/QUERY-HANDLERS.md` (error vs `{ data.error }`, mutations, locks, intel limits); unit tests for intel, profile, uat, skills, summary, websearch, workstream, registry vs `QUERY_MUTATION_COMMANDS`, and frontmatter extract/splice round-trip.
+
+## [1.35.0] - 2026-04-10
+
+### Added
+- **Cline runtime support** — First-class Cline runtime via rules-based integration. Installs to `~/.cline/` or `./.cline/` as `.clinerules`. No custom slash commands — uses rules. `--cline` flag. (#1605 follow-up)
+- **CodeBuddy runtime support** — Skills-based install to `~/.codebuddy/skills/gsd-*/SKILL.md`. `--codebuddy` flag.
+- **Qwen Code runtime support** — Skills-based install to `~/.qwen/skills/gsd-*/SKILL.md`, same open standard as Claude Code 2.1.88+. `QWEN_CONFIG_DIR` env var for custom paths. `--qwen` flag.
+- **`/gsd-from-gsd2` command** (`gsd:from-gsd2`) — Reverse migration from GSD-2 format (`.gsd/` with Milestone→Slice→Task hierarchy) back to v1 `.planning/` format. Flags: `--dry-run` (preview only), `--force` (overwrite existing `.planning/`), `--path <dir>` (specify GSD-2 root). Produces `PROJECT.md`, `REQUIREMENTS.md`, `ROADMAP.md`, `STATE.md`, and sequential phase dirs. Flattens Milestone→Slice hierarchy to sequential phase numbers (M001/S01→phase 01, M001/S02→phase 02, M002/S01→phase 03, etc.).
+- **`/gsd-ai-integration-phase` command** (`gsd:ai-integration-phase`) — AI framework selection wizard for integrating AI/LLM capabilities into a project phase. Interactive decision matrix with domain-specific failure modes and eval criteria. Produces `AI-SPEC.md` with framework recommendation, implementation guidance, and evaluation strategy. Runs 3 parallel specialist agents: domain-researcher, framework-selector, ai-researcher, eval-planner.
+- **`/gsd-eval-review` command** (`gsd:eval-review`) — Retroactive audit of an implemented AI phase's evaluation coverage. Checks implementation against `AI-SPEC.md` evaluation plan. Scores each eval dimension as COVERED/PARTIAL/MISSING. Produces `EVAL-REVIEW.md` with findings, gaps, and remediation guidance.
+- **Review model configuration** — Per-CLI model selection for /gsd-review via `review.models.<cli>` config keys. Falls back to CLI defaults when not set. (#1849)
+- **Statusline now surfaces GSD milestone/phase/status** — when no `in_progress` todo is active, `gsd-statusline.js` reads `.planning/STATE.md` (walking up from the workspace dir) and fills the middle slot with `<milestone> · <status> · <phase> (N/total)`. Gracefully degrades when fields are missing; identical to previous behavior when there is no STATE.md or an active todo wins the slot. Uses the YAML frontmatter added for #628.
+- **Qwen Code and Cursor CLI peer reviewers** — Added as reviewers in `/gsd-review` with `--qwen` and `--cursor` flags. (#1966)
+
+### Changed
+- **Worktree safety — `git clean` prohibition** — `gsd-executor` now prohibits `git clean` in worktree context to prevent deletion of prior wave output. (#2075)
+- **Executor deletion verification** — Pre-merge deletion checks added to catch missing artifacts before executor commit. (#2070)
+- **Hard reset in worktree branch check** — `--hard` flag in `worktree_branch_check` now correctly resets the file tree, not just HEAD. (#2073)
+
+### Fixed
+- **Context7 MCP CLI fallback** — Handles `tools: []` response that previously broke Context7 availability detection. (#1885)
+- **`Agent` tool in gsd-autonomous** — Added `Agent` to `allowed-tools` to unblock subagent spawning. (#2043)
+- **`intel.enabled` in config-set whitelist** — Config key now accepted by `config-set` without validation error. (#2021)
+- **`writeSettings` null guard** — Guards against null `settingsPath` for Cline runtime to prevent crash on install. (#2046)
+- **Shell hook absolute paths** — `.sh` hooks now receive absolute quoted paths in `buildHookCommand`, fixing path resolution in non-standard working directories. (#2045)
+- **`processAttribution` runtime-aware** — Was hardcoded to `'claude'`; now reads actual runtime from environment.
+- **`AskUserQuestion` plain-text fallback** — Non-Claude runtimes now receive plain-text numbered lists instead of broken TUI menus.
+- **iOS app scaffold uses XcodeGen** — Prevents SPM execution errors in generated iOS scaffolds. (#2023)
+- **`acceptance_criteria` hard gate** — Enforced as a hard gate in executor — plans missing acceptance criteria are rejected before execution begins. (#1958)
+- **`normalizePhaseName` preserves letter suffix case** — Phase names with letter suffixes (e.g., `1a`, `2B`) now preserve original case. (#1963)
+
 ## [1.34.2] - 2026-04-06
 
 ### Changed

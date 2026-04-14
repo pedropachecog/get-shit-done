@@ -37,6 +37,48 @@ When a milestone completes:
 
 <process>
 
+<step name="pre_close_artifact_audit">
+Before proceeding with milestone close, run the comprehensive open artifact audit:
+
+```bash
+node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" audit-open 2>/dev/null
+```
+
+If the output contains open items (any section with count > 0):
+
+Display the full audit report to the user.
+
+Then ask:
+```
+These items are open. Choose an action:
+[R] Resolve — stop and fix items, then re-run /gsd-complete-milestone
+[A] Acknowledge all — document as deferred and proceed with close
+[C] Cancel — exit without closing
+```
+
+If user chooses [A] (Acknowledge):
+1. Re-run `audit-open --json` to get structured data
+2. Write acknowledged items to STATE.md under `## Deferred Items` section:
+   ```markdown
+   ## Deferred Items
+
+   Items acknowledged and deferred at milestone close on {date}:
+
+   | Category | Item | Status |
+   |----------|------|--------|
+   | debug | {slug} | {status} |
+   | quick_task | {slug} | {status} |
+   ...
+   ```
+   Sanitize all slug and status values via `sanitizeForDisplay()` before writing. Never inject raw file content into STATE.md.
+3. Record in MILESTONES.md entry: `Known deferred items at close: {count} (see STATE.md Deferred Items)`
+4. Proceed with milestone close.
+
+If output shows all clear (no open items): print `All artifact types clear.` and proceed.
+
+SECURITY: Audit JSON output is structured data from gsd-tools.cjs — validated and sanitized at source. When writing to STATE.md, item slugs and descriptions are sanitized via `sanitizeForDisplay()` before inclusion. Never inject raw user-supplied content into STATE.md without sanitization.
+</step>
+
 <step name="verify_readiness">
 
 **Use `roadmap analyze` for comprehensive readiness check:**
@@ -387,6 +429,8 @@ Verify: `✅ Milestone archived to .planning/milestones/`
 
 **Phase archival (optional):** After archival completes, ask the user:
 
+
+**Text mode (`workflow.text_mode: true` in config or `--text` flag):** Set `TEXT_MODE=true` if `--text` is present in `$ARGUMENTS` OR `text_mode` from init JSON is `true`. When TEXT_MODE is active, replace every `AskUserQuestion` call with a plain-text numbered list and ask the user to type their choice number. This is required for non-Claude runtimes (OpenAI Codex, Gemini CLI, etc.) where `AskUserQuestion` is not available.
 AskUserQuestion(header="Archive Phases", question="Archive phase directories to milestones/?", options: "Yes — move to milestones/v[X.Y]-phases/" | "Skip — keep phases in place")
 
 If "Yes": move phase directories to the milestone archive:
@@ -775,6 +819,10 @@ Heuristic: "Is this deployed/usable/shipped?" If yes → milestone. If no → ke
 <success_criteria>
 
 Milestone completion is successful when:
+
+- [ ] Pre-close artifact audit run and output shown to user
+- [ ] Deferred items recorded in STATE.md if user acknowledged
+- [ ] Known deferred items count noted in MILESTONES.md entry
 
 - [ ] MILESTONES.md entry created with stats and accomplishments
 - [ ] PROJECT.md full evolution review completed
