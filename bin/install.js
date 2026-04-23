@@ -6786,22 +6786,54 @@ function installSdkIfNeeded() {
   console.log(`\n  ${cyan}Building GSD SDK from source (${sdkDir})…${reset}`);
   const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
+  // Windows: Node.js refuses to spawn .cmd/.bat files without `shell: true`
+  // after CVE-2024-27980 (fixed in Node ≥ 18.20.2 / ≥ 20.12.2 / ≥ 21.7.3).
+  // Without shell, spawnSync returns { status: null, error: EINVAL } and
+  // every `status !== 0` check trips — producing a silent build failure
+  // with no underlying diagnostic because stdio: 'inherit' never gets a
+  // child to stream (#2598).
+  const needsShell = process.platform === 'win32';
+  const spawnNpm = (args, opts = {}) =>
+    spawnSync(npmCmd, args, { ...opts, shell: opts.shell ?? needsShell });
+
+  // Format the underlying spawnSync failure so EINVAL / ENOENT / signal exits
+  // surface in the fatal banner instead of being swallowed. The #2598 silent
+  // failure happened precisely because `{ status: null, error: EINVAL }` was
+  // reduced to a generic "Failed to npm install" with no diagnostic — the real
+  // cause (CVE-2024-27980 on Windows) was invisible in the output.
+  const formatSpawnFailure = (result) => {
+    if (!result) return '';
+    if (result.error) return ` (${result.error.code || result.error.name || 'spawn error'}: ${result.error.message})`;
+    if (result.signal) return ` (signal: ${result.signal})`;
+    if (typeof result.status === 'number') return ` (exit status: ${result.status})`;
+    return '';
+  };
+
   // 1. Install sdk build-time dependencies (tsc, etc.)
-  const installResult = spawnSync(npmCmd, ['install'], { cwd: sdkDir, stdio: 'inherit' });
+  const installResult = spawnNpm(['install'], { cwd: sdkDir, stdio: 'inherit' });
   if (installResult.status !== 0) {
-    emitSdkFatal('Failed to `npm install` in sdk/.', { globalBin: null, exitCode: 1 });
+    emitSdkFatal(
+      `Failed to \`npm install\` in sdk/.${formatSpawnFailure(installResult)}`,
+      { globalBin: null, exitCode: 1 },
+    );
   }
 
   // 2. Compile TypeScript → sdk/dist/
-  const buildResult = spawnSync(npmCmd, ['run', 'build'], { cwd: sdkDir, stdio: 'inherit' });
+  const buildResult = spawnNpm(['run', 'build'], { cwd: sdkDir, stdio: 'inherit' });
   if (buildResult.status !== 0) {
-    emitSdkFatal('Failed to `npm run build` in sdk/.', { globalBin: null, exitCode: 1 });
+    emitSdkFatal(
+      `Failed to \`npm run build\` in sdk/.${formatSpawnFailure(buildResult)}`,
+      { globalBin: null, exitCode: 1 },
+    );
   }
 
   // 3. Install the built package globally so `gsd-sdk` lands on PATH.
-  const globalResult = spawnSync(npmCmd, ['install', '-g', '.'], { cwd: sdkDir, stdio: 'inherit' });
+  const globalResult = spawnNpm(['install', '-g', '.'], { cwd: sdkDir, stdio: 'inherit' });
   if (globalResult.status !== 0) {
-    emitSdkFatal('Failed to `npm install -g .` from sdk/.', { globalBin: null, exitCode: 1 });
+    emitSdkFatal(
+      `Failed to \`npm install -g .\` from sdk/.${formatSpawnFailure(globalResult)}`,
+      { globalBin: null, exitCode: 1 },
+    );
   }
 
   // 3a. Explicitly chmod dist/cli.js to 0o755 in the global install location.
@@ -6811,7 +6843,7 @@ function installSdkIfNeeded() {
   // a non-executable file and `command -v gsd-sdk` fails on every first install
   // (root cause of #2453). Mirrors the pattern used for hook files in this installer.
   try {
-    const prefixRes = spawnSync(npmCmd, ['config', 'get', 'prefix'], { encoding: 'utf-8' });
+    const prefixRes = spawnNpm(['config', 'get', 'prefix'], { encoding: 'utf-8' });
     if (prefixRes.status === 0) {
       const npmPrefix = (prefixRes.stdout || '').trim();
       const sdkPkg = JSON.parse(fs.readFileSync(path.join(sdkDir, 'package.json'), 'utf-8'));
@@ -6835,7 +6867,7 @@ function installSdkIfNeeded() {
   }
 
   // Off-PATH: resolve npm global bin dir for actionable remediation.
-  const prefixResult = spawnSync(npmCmd, ['config', 'get', 'prefix'], { encoding: 'utf-8' });
+  const prefixResult = spawnNpm(['config', 'get', 'prefix'], { encoding: 'utf-8' });
   const prefix = prefixResult.status === 0 ? (prefixResult.stdout || '').trim() : null;
   const globalBin = prefix
     ? (process.platform === 'win32' ? prefix : path.join(prefix, 'bin'))
