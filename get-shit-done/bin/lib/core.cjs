@@ -288,26 +288,40 @@ function loadConfig(cwd) {
     // Auto-detect and sync sub_repos: scan for child directories with .git
     let configDirty = false;
 
-    // Migrate legacy "multiRepo: true" boolean → sub_repos array
+    // Migrate legacy "multiRepo: true" boolean → planning.sub_repos array.
+    // Canonical location is planning.sub_repos (#2561); writing to top-level
+    // would be flagged as unknown by the validator below (#2638).
     if (parsed.multiRepo === true && !parsed.sub_repos && !parsed.planning?.sub_repos) {
       const detected = detectSubRepos(cwd);
       if (detected.length > 0) {
-        parsed.sub_repos = detected;
         if (!parsed.planning) parsed.planning = {};
+        parsed.planning.sub_repos = detected;
         parsed.planning.commit_docs = false;
         delete parsed.multiRepo;
         configDirty = true;
       }
     }
 
-    // Keep sub_repos in sync with actual filesystem
-    const currentSubRepos = parsed.sub_repos || parsed.planning?.sub_repos || [];
+    // Self-heal legacy/buggy installs: strip any stale top-level sub_repos,
+    // preserving its value as the planning.sub_repos seed if that slot is empty.
+    if (Object.prototype.hasOwnProperty.call(parsed, 'sub_repos')) {
+      if (!parsed.planning) parsed.planning = {};
+      if (!parsed.planning.sub_repos) {
+        parsed.planning.sub_repos = parsed.sub_repos;
+      }
+      delete parsed.sub_repos;
+      configDirty = true;
+    }
+
+    // Keep planning.sub_repos in sync with actual filesystem
+    const currentSubRepos = parsed.planning?.sub_repos || [];
     if (Array.isArray(currentSubRepos) && currentSubRepos.length > 0) {
       const detected = detectSubRepos(cwd);
       if (detected.length > 0) {
         const sorted = [...currentSubRepos].sort();
         if (JSON.stringify(sorted) !== JSON.stringify(detected)) {
-          parsed.sub_repos = detected;
+          if (!parsed.planning) parsed.planning = {};
+          parsed.planning.sub_repos = detected;
           configDirty = true;
         }
       }
