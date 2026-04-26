@@ -2,8 +2,9 @@
  * Query command registry — routes commands to native SDK handlers.
  *
  * The registry is a flat `Map<string, QueryHandler>` that maps command names
- * to handler functions. Unknown commands throw GSDError — the gsd-tools.cjs
- * fallback was removed in v3.0 when all commands were migrated to native handlers.
+ * to handler functions. Unknown keys passed to `dispatch()` throw `GSDError`.
+ * The `gsd-sdk query` CLI resolves argv with `resolveQueryArgv()` before dispatch;
+ * there is no automatic delegation to `gsd-tools.cjs`.
  *
  * Also exports `extractField` — a TypeScript port of the `--pick` field
  * extraction logic from gsd-tools.cjs (lines 365-382).
@@ -59,9 +60,9 @@ export function extractField(obj: unknown, fieldPath: string): unknown {
 /**
  * Flat command registry that routes query commands to native handlers.
  *
- * Unknown commands throw `GSDError` from `dispatch()` — there is no fallback
- * to gsd-tools.cjs (bridge removed in v3.0). All supported commands must be
- * registered via `register()`.
+ * `dispatch()` throws `GSDError` for unknown command keys. The `gsd-sdk query`
+ * CLI uses `resolveQueryArgv()` first; when no handler matches, it may shell out
+ * to `gsd-tools.cjs` (see `cli.ts` and `QUERY-HANDLERS.md` fallback policy).
  */
 export class QueryRegistry {
   private handlers = new Map<string, QueryHandler>();
@@ -106,16 +107,14 @@ export class QueryRegistry {
   /**
    * Dispatch a command to its registered native handler.
    *
-   * Throws GSDError for unknown commands — the gsd-tools.cjs fallback was
-   * removed in v3.0. All commands must be registered as native handlers (T-14-13).
-   *
    * @param command - The command name to dispatch
    * @param args - Arguments to pass to the handler
    * @param projectDir - The project directory for context
+   * @param workstream - Optional workstream name to scope .planning paths
    * @returns The query result from the handler
    * @throws GSDError if no handler is registered for the command
    */
-  async dispatch(command: string, args: string[], projectDir: string): Promise<QueryResult> {
+  async dispatch(command: string, args: string[], projectDir: string, workstream?: string): Promise<QueryResult> {
     const handler = this.handlers.get(command);
     if (!handler) {
       throw new GSDError(
@@ -123,6 +122,67 @@ export class QueryRegistry {
         ErrorClassification.Validation,
       );
     }
-    return handler(args, projectDir);
+    return handler(args, projectDir, workstream);
   }
+}
+
+/**
+ * If the first token contains a dot (e.g. `init.execute-phase`), split it into
+ * segments and prepend those segments in place of the original token. Args that
+ * follow the dotted token are preserved.
+ *
+ * Examples:
+ *   ['init.new-project']               -> ['init', 'new-project']
+ *   ['init.execute-phase', '1']        -> ['init', 'execute-phase', '1']
+ *   ['state.update', 'status', 'X']    -> ['state', 'update', 'status', 'X']
+ *
+ * Returns the original array (by reference) when no expansion applies so callers
+ * can detect "nothing changed" via identity comparison.
+ */
+function expandFirstDottedToken(tokens: string[]): string[] {
+  if (tokens.length === 0) {
+    return tokens;
+  }
+  const first = tokens[0];
+  if (first.startsWith('--') || !first.includes('.')) {
+    return tokens;
+  }
+  return [...first.split('.'), ...tokens.slice(1)];
+}
+
+function matchRegisteredPrefix(
+  tokens: string[],
+  registry: QueryRegistry,
+): { cmd: string; args: string[] } | null {
+  for (let i = tokens.length; i >= 1; i--) {
+    const head = tokens.slice(0, i);
+    const dotted = head.join('.');
+    const spaced = head.join(' ');
+    if (registry.has(dotted)) {
+      return { cmd: dotted, args: tokens.slice(i) };
+    }
+    if (registry.has(spaced)) {
+      return { cmd: spaced, args: tokens.slice(i) };
+    }
+  }
+  return null;
+}
+
+/**
+ * Map argv after `gsd-sdk query` to a registered handler key and remaining args.
+ * Longest-prefix match on dotted (`a.b.c`) and spaced (`a b c`) keys; if no match,
+ * expands a single dotted token (`state.validate` → `state`, `validate`) and retries.
+ */
+export function resolveQueryArgv(
+  tokens: string[],
+  registry: QueryRegistry,
+): { cmd: string; args: string[] } | null {
+  let matched = matchRegisteredPrefix(tokens, registry);
+  if (!matched) {
+    const expanded = expandFirstDottedToken(tokens);
+    if (expanded !== tokens) {
+      matched = matchRegisteredPrefix(expanded, registry);
+    }
+  }
+  return matched;
 }

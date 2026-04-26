@@ -59,9 +59,10 @@ export async function runPlanSession(
   agentDef?: string,
   eventStream?: GSDEventStream,
   streamContext?: EventStreamContext,
+  phaseDir?: string,
 ): Promise<PlanResult> {
   // Build the executor prompt
-  const executorPrompt = buildExecutorPrompt(plan, agentDef);
+  const executorPrompt = buildExecutorPrompt(plan, { agentDef, phaseDir });
 
   // Resolve allowed tools — from agent definition or defaults
   const allowedTools = options?.allowedTools ??
@@ -277,7 +278,7 @@ export async function runPhaseStepSession(
   const cwd = options?.cwd ?? process.cwd();
 
   const queryStream = query({
-    prompt: prompt,
+    prompt: `Execute this phase step: ${phaseStep}`,
     options: {
       systemPrompt: {
         type: 'preset',

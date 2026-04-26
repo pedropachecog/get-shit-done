@@ -162,15 +162,25 @@ describe('loadConfig', () => {
     const { VALID_CONFIG_KEYS } = require('../get-shit-done/bin/lib/config.cjs');
     // Every top-level key from VALID_CONFIG_KEYS should be recognized
     const topLevelKeys = [...VALID_CONFIG_KEYS].map(k => k.split('.')[0]);
+    // For value-validated keys (e.g. `runtime` enforces an enum at loadConfig
+    // time, see #2517 review finding #10), seed a known-good value so the
+    // value-validation warning doesn't fire — this test only checks that the
+    // key NAME is recognized, not whether the value itself is valid.
+    const KEY_VALID_VALUES = { runtime: 'codex' };
     for (const key of topLevelKeys) {
-      writeConfig({ [key]: 'test-value' });
+      const value = KEY_VALID_VALUES[key] ?? 'test-value';
+      writeConfig({ [key]: value });
       const origWrite = process.stderr.write;
       let stderrOutput = '';
       process.stderr.write = (chunk) => { stderrOutput += chunk; };
       try {
         loadConfig(tmpDir);
+        // Look only for the unknown-KEY warning shape, not any incidental match
+        // (the value-validation warning emitted by #2517 mentions key names too).
+        const unknownKeyWarning = stderrOutput.includes('unknown config key(s)') &&
+          stderrOutput.includes(key);
         assert.ok(
-          !stderrOutput.includes(key),
+          !unknownKeyWarning,
           `VALID_CONFIG_KEYS key "${key}" should not trigger unknown-key warning`
         );
       } finally {
@@ -600,6 +610,108 @@ describe('getMilestoneInfo', () => {
     assert.strictEqual(info.version, 'v1.0');
     assert.strictEqual(info.name, 'milestone');
   });
+
+  // Bug #2409: getMilestoneInfo must prefer STATE.md milestone: field over regex matching
+  test('uses STATE.md milestone frontmatter when 🚧 is inside <summary> tag without bold (bug #2409)', () => {
+    // STATE.md says v2.9, ROADMAP has 🚧 v2.9 inside <summary> (not bolded) — no bold regex match
+    const roadmap = [
+      '# Milestones',
+      '',
+      '- ✅ v2.2 Old Features — shipped 2026-04-03',
+      '- 🚧 v2.9 Full-Pass Verification',
+      '',
+      '<details>',
+      '<summary>🚧 v2.9 Full-Pass Verification & Bug Fixing — IN PROGRESS</summary>',
+      '',
+      '## Roadmap v2.9: Full-Pass Verification & Bug Fixing',
+      '',
+      '### Phase 1: Verification',
+      '',
+      '</details>',
+      '',
+      '## Phase Details (v2.2 — Old Features)',
+      '',
+      '### Phase 1: Old Stuff',
+    ].join('\n');
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'ROADMAP.md'), roadmap);
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'STATE.md'),
+      '---\nmilestone: v2.9\n---\n\n# State\n'
+    );
+
+    const info = getMilestoneInfo(tmpDir);
+    assert.strictEqual(info.version, 'v2.9',
+      'should return v2.9 from STATE.md, not v2.2 from a stale heading match');
+    assert.ok(info.name.includes('Full-Pass') || info.name.includes('Verification'),
+      `name should reference the v2.9 milestone, got: "${info.name}"`);
+  });
+
+  test('STATE.md milestone takes precedence over first ## heading match (bug #2409)', () => {
+    // ROADMAP with multiple ## headings — without STATE.md anchoring, first match wins
+    const roadmap = [
+      '## Phase Details (v1.5–v2.1)',
+      '',
+      '## Roadmap v2.2: Old Milestone',
+      '',
+      '## Roadmap v2.9: Current Milestone',
+      '',
+      '### Phase 1: Alpha',
+    ].join('\n');
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'ROADMAP.md'), roadmap);
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'STATE.md'),
+      '---\nmilestone: v2.9\n---\n\n# State\n'
+    );
+
+    const info = getMilestoneInfo(tmpDir);
+    assert.strictEqual(info.version, 'v2.9',
+      'should read v2.9 from STATE.md, not v2.2 from first ## heading');
+    assert.strictEqual(info.name, 'Current Milestone');
+  });
+
+  // Bug found in code review of PR #2458: stateVersion early-return doesn't check if shipped
+  test('falls through to new active milestone when STATE.md version is already shipped (✅ heading)', () => {
+    // STATE.md still says v1.0 (stale), but v1.0 is marked ✅ in ROADMAP.md.
+    // getMilestoneInfo must NOT return v1.0; it must fall through and detect v2.0.
+    const roadmap = [
+      '## v1.0 ✅ Initial Release: Done',
+      '',
+      '### Phase 1: Setup',
+      '',
+      '## v2.0: Active Milestone',
+      '',
+      '### Phase 2: Build',
+    ].join('\n');
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'ROADMAP.md'), roadmap);
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'STATE.md'),
+      '---\nmilestone: v1.0\n---\n\n# State\n'
+    );
+
+    const info = getMilestoneInfo(tmpDir);
+    assert.strictEqual(info.version, 'v2.0',
+      'should return v2.0 (active milestone), not v1.0 (stale shipped milestone from STATE.md)');
+    assert.strictEqual(info.name, 'Active Milestone');
+  });
+
+  test('falls through when STATE.md version matches ✅ heading in alternate position formats', () => {
+    // ✅ can appear before the version: ## ✅ v1.0 Old Name
+    const roadmap = [
+      '## ✅ v1.0 Old Name',
+      '',
+      '## v2.0: New Stuff',
+    ].join('\n');
+    fs.writeFileSync(path.join(tmpDir, '.planning', 'ROADMAP.md'), roadmap);
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'STATE.md'),
+      '---\nmilestone: v1.0\n---\n\n# State\n'
+    );
+
+    const info = getMilestoneInfo(tmpDir);
+    assert.strictEqual(info.version, 'v2.0',
+      'should return v2.0, not stale v1.0 with ✅ prefix in heading');
+    assert.strictEqual(info.name, 'New Stuff');
+  });
 });
 
 // ─── searchPhaseInDir ──────────────────────────────────────────────────────────
@@ -789,6 +901,41 @@ describe('getRoadmapPhaseInternal', () => {
     assert.ok(result.section.includes('Some details here'));
     // Should not include Phase 2 content
     assert.ok(!result.section.includes('Phase 2: API'));
+  });
+
+  // Bug #2391: zero-padded phase numbers ("03") must match unpadded ROADMAP headings ("Phase 3:")
+  test('matches zero-padded phase number against unpadded ROADMAP heading (bug #2391)', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'ROADMAP.md'),
+      '### Phase 3: Rotation Engine\n**Goal**: Build rotation\n**Requirements**: ROTA-01\n'
+    );
+    const result = getRoadmapPhaseInternal(tmpDir, '03');
+    assert.ok(result !== null, 'should find the phase with zero-padded input "03"');
+    assert.strictEqual(result.found, true);
+    assert.strictEqual(result.phase_name, 'Rotation Engine');
+    assert.strictEqual(result.goal, 'Build rotation');
+  });
+
+  test('matches double-zero-padded phase number against unpadded ROADMAP heading (bug #2391)', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'ROADMAP.md'),
+      '### Phase 7: Final\n**Goal**: Ship it\n'
+    );
+    const result = getRoadmapPhaseInternal(tmpDir, '007');
+    assert.ok(result !== null, 'should find the phase with "007"');
+    assert.strictEqual(result.found, true);
+    assert.strictEqual(result.phase_name, 'Final');
+  });
+
+  test('unpadded lookup still works after fix (regression check)', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'ROADMAP.md'),
+      '### Phase 3: Rotation Engine\n**Goal**: Build rotation\n'
+    );
+    const result = getRoadmapPhaseInternal(tmpDir, '3');
+    assert.ok(result !== null);
+    assert.strictEqual(result.found, true);
+    assert.strictEqual(result.phase_name, 'Rotation Engine');
   });
 });
 
@@ -1071,8 +1218,10 @@ describe('stale hook filter', () => {
 
 describe('stale hook path', () => {
   test('gsd-check-update.js checks configDir/hooks/ where hooks are actually installed (#1421)', () => {
+    // The stale-hook scan logic lives in the worker (moved from inline -e template literal).
+    // The worker receives configDir via env and constructs the hooksDir path.
     const content = fs.readFileSync(
-      path.join(__dirname, '..', 'hooks', 'gsd-check-update.js'), 'utf-8'
+      path.join(__dirname, '..', 'hooks', 'gsd-check-update-worker.js'), 'utf-8'
     );
     // Hooks are installed at configDir/hooks/ (e.g. ~/.claude/hooks/),
     // not configDir/get-shit-done/hooks/ which doesn't exist (#1421)
@@ -1370,9 +1519,10 @@ describe('loadConfig sub_repos auto-sync', () => {
     assert.deepStrictEqual(config.sub_repos, ['backend', 'frontend']);
     assert.strictEqual(config.commit_docs, false);
 
-    // Verify config was persisted
+    // Verify config was persisted to the canonical location (planning.sub_repos per #2561/#2638)
     const saved = JSON.parse(fs.readFileSync(path.join(projectRoot, '.planning', 'config.json'), 'utf-8'));
-    assert.deepStrictEqual(saved.sub_repos, ['backend', 'frontend']);
+    assert.deepStrictEqual(saved.planning?.sub_repos, ['backend', 'frontend']);
+    assert.strictEqual(saved.sub_repos, undefined, 'top-level sub_repos should not be written (#2638)');
     assert.strictEqual(saved.multiRepo, undefined, 'multiRepo should be removed');
   });
 
