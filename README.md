@@ -21,27 +21,28 @@
 > | `context` | Library documentation lookup | [`@neuledge/context`](https://github.com/neuledge/context) | `npm i -g @neuledge/context` then `claude mcp add context context serve` |
 > | `searxng` | Web search (no API key) | [`mcp-searxng`](https://github.com/searxng/searxng) | Run a local SearXNG instance, then `claude mcp add searxng npx -y mcp-searxng` |
 >
-> **Installation:** This fork is only available from source — there is no published npm package.
->
-> ```bash
-> git clone https://github.com/pedropachecog/get-shit-done.git
-> cd get-shit-done
-> npm ci
-> npm run build:hooks          # compile hooks/src/ → hooks/dist/
-> node bin/install.js --claude --local   # install to ./.claude/
-> ```
->
-> To also build the SDK (needed for `gsd-sdk` CLI commands):
->
-> ```bash
-> npm run build:hooks && npm run build:sdk
-> node bin/install.js --claude --local
-> ```
->
-> > [!IMPORTANT]
-> > **`npm run build:hooks` is required before installing.** The installer copies hook files from `hooks/dist/`, which only exists after the build step. Skipping it means hooks won't be installed and Claude Code will throw hook errors silently.
->
 > If you're not running a local searxng instance or don't care about MCP alignment, the upstream version at [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done) is the better choice. The documentation below is from upstream and covers commands and concepts shared by both forks, but the installation methods described in the upstream README do not apply here.
+
+### Installation
+
+This fork is only available from source — there is no published npm package.
+
+```bash
+git clone https://github.com/pedropachecog/get-shit-done.git
+cd get-shit-done
+npm ci
+npm run build:hooks && npm run build:sdk
+node bin/install.js --claude --global   # install to ~/.claude/
+```
+
+For a local (project-scoped) install, replace the last line:
+
+```bash
+node bin/install.js --claude --local   # install to ./.claude/
+```
+
+> [!IMPORTANT]
+> **Both `build:hooks` and `build:sdk` are required** — the installer copies hook files from `hooks/dist/` and the SDK from `sdk/dist/`. Skipping either means missing functionality.
 
 ---
 
