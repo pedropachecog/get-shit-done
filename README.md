@@ -10,7 +10,7 @@
 > **What's different here:**
 >
 > - **Local-first research.** Upstream's research agents use Context7 (`mcp__context7__*`) for library docs and WebSearch for web queries. This fork replaces both with a self-hosted stack: `mcp__searxng__*` for web search (no API key, no rate limits) and `mcp__context__*` for library docs. The result is faster research loops with no cloud dependencies.
-> - **Claude Code is the primary runtime.** Upstream supports 15+ agent runtimes. This fork keeps that breadth — no prompts or agents have been modified. Everything here has simply been tested in Claude Code with a local model.
+> - **Claude Code is the primary runtime.** Upstream supports 15+ agent runtimes. This fork keeps that breadth — everything here has been tested in Claude Code with a local model.
 > - **Research preflight (`/gsd-research-status`).** A command to check your local research stack before running research-heavy workflows — tells you which MCP providers are connected, which are missing, and what to fix.
 > - **Tracks upstream.** Periodic merges pull in upstream features, bug fixes, and new commands. Fork-specific changes are kept to the minimum needed to support the above.
 >
@@ -21,7 +21,27 @@
 > | `context` | Library documentation lookup | [`@neuledge/context`](https://github.com/neuledge/context) | `npm i -g @neuledge/context` then `claude mcp add context context serve` |
 > | `searxng` | Web search (no API key) | [`mcp-searxng`](https://github.com/searxng/searxng) | Run a local SearXNG instance, then `claude mcp add searxng npx -y mcp-searxng` |
 >
-> If you're not running a local searxng instance or don't care about MCP alignment, the upstream version at [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done) is the better choice. Everything below is upstream documentation and applies to both.
+> **Installation:** This fork is only available from source — there is no published npm package.
+>
+> ```bash
+> git clone https://github.com/pedropachecog/get-shit-done.git
+> cd get-shit-done
+> npm ci
+> npm run build:hooks          # compile hooks/src/ → hooks/dist/
+> node bin/install.js --claude --local   # install to ./.claude/
+> ```
+>
+> To also build the SDK (needed for `gsd-sdk` CLI commands):
+>
+> ```bash
+> npm run build:hooks && npm run build:sdk
+> node bin/install.js --claude --local
+> ```
+>
+> > [!IMPORTANT]
+> > **`npm run build:hooks` is required before installing.** The installer copies hook files from `hooks/dist/`, which only exists after the build step. Skipping it means hooks won't be installed and Claude Code will throw hook errors silently.
+>
+> If you're not running a local searxng instance or don't care about MCP alignment, the upstream version at [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done) is the better choice. The documentation below is from upstream and covers commands and concepts shared by both forks, but the installation methods described in the upstream README do not apply here.
 
 ---
 
