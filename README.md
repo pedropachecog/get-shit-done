@@ -5,15 +5,16 @@
 </div>
 
 > [!NOTE]
-> **This is a fork of [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done).**
+> **This is a personal fork of [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done), optimized for Claude Code with a self-hosted, local-first research stack.**
 >
-> **Why this fork exists:**
-> - **Claude-first, local-first.** Upstream targets a dozen agent runtimes (Codex, Gemini, Kilo, Cursor, Windsurf, etc.). This fork optimizes for Claude Code as the primary runtime — other runtimes are supported but secondary.
-> - **MCP alignment.** Fork standardizes on the `mcp__context__*` MCP provider (instead of upstream's `mcp__context7__*`) and adds local-first research visibility via `research-status` and `agent-dispatch` tooling.
-> - **Fork-specific additions:** research preflight checks (`--context-only`), integration test suite for agent dispatch, RESEARCH.md fixtures, plus a few hook-path and installer fixes upstream hasn't merged.
-> - **Sync cadence.** Tracks upstream `main` via periodic merges — upstream features land here, fork-specific changes stay local.
+> **What's different here:**
 >
-> For the upstream-flavored, multi-runtime version, see [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done). Everything below is upstream documentation and applies to both.
+> - **Claude Code is the primary runtime.** Upstream supports 15+ agent runtimes. This fork keeps that breadth but makes Claude Code the first-class citizen — agents, prompts, and tooling are tuned for it first.
+> - **Local-first research.** Upstream's research agents use Context7 (`mcp__context7__*`) for library docs and WebSearch for web queries. This fork replaces both with a self-hosted stack: `mcp__searxng__*` for web search (no API key, no rate limits) and `mcp__context__*` for library docs. The result is faster research loops with no cloud dependencies.
+> - **Research preflight (`/gsd-research-status`).** A command to check your local research stack before running research-heavy workflows — tells you which MCP providers are connected, which are missing, and what to fix.
+> - **Tracks upstream.** Periodic merges pull in upstream features, bug fixes, and new commands. Fork-specific changes are kept to the minimum needed to support the above.
+>
+> If you're not running a local searxng instance or don't care about MCP alignment, the upstream version at [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done) is the better choice. Everything below is upstream documentation and applies to both.
 
 ---
 
@@ -214,23 +215,26 @@ The GSD SDK CLI (`gsd-sdk`) is installed automatically (required by `/gsd-*` com
 
 </details>
 
-<details>
-<summary><strong>Development Installation</strong></summary>
+### Development Installation (from source)
 
-Clone the repository, build hooks, and run the installer locally:
+> [!IMPORTANT]
+> **`npm run build:hooks` is required before installing from source.** The installer copies hook files from `hooks/dist/`, which only exists after the build step. Skipping it means hooks won't be installed and Claude Code will throw hook errors silently. The published npm package handles this automatically via `prepublishOnly` — local installs do not.
 
 ```bash
 git clone https://github.com/pedropachecog/get-shit-done.git
 cd get-shit-done
-npm run build:hooks
+npm run build:hooks          # compile hooks/src/ → hooks/dist/
+node bin/install.js --claude --local   # install to ./.claude/
+```
+
+To also build the SDK (needed for `gsd-sdk` CLI commands):
+
+```bash
+npm run build:hooks && npm run build:sdk
 node bin/install.js --claude --local
 ```
 
-The `build:hooks` step is required — it compiles hook sources into `hooks/dist/` which the installer copies from. Without it, hooks won't be installed and you'll get hook errors in Claude Code. (The npm release handles this automatically via `prepublishOnly`.)
-
-Installs to `./.claude/` for testing modifications before contributing.
-
-</details>
+Installs to `./.claude/` so you can test local changes without touching your global install. Re-run after any change to `hooks/src/` or `get-shit-done/`.
 
 ### Recommended: Skip Permissions Mode
 
