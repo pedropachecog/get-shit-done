@@ -36,7 +36,8 @@
 > ```bash
 > node bin/install.js --claude --local   # install to ./.claude/
 > ```
->
+
+> [!IMPORTANT]
 > **Both `build:hooks` and `build:sdk` are required** — the installer copies hook files from `hooks/dist/` and the SDK from `sdk/dist/`. Skipping either means missing functionality.
 
 > [!NOTE]
