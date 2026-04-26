@@ -10,7 +10,7 @@
 > **What's different here:**
 >
 > - **Local-first research.** Upstream's research agents use Context7 (`mcp__context7__*`) for library docs and WebSearch for web queries. This fork replaces both with a self-hosted stack: `mcp__searxng__*` for web search (no API key, no rate limits) and `mcp__context__*` for library docs. The result is faster research loops with no cloud dependencies.
-> - **Claude Code is the primary runtime.** Upstream supports 15+ agent runtimes. This fork keeps that breadth — everything here has been tested in Claude Code with a local model.
+> - **Built for Claude Code with a local model.** Everything in this fork has been tested running Claude Code locally.
 > - **Research preflight (`/gsd-research-status`).** A command to check your local research stack before running research-heavy workflows — tells you which MCP providers are connected, which are missing, and what to fix.
 > - **Tracks upstream.** Periodic merges pull in upstream features, bug fixes, and new commands. Fork-specific changes are kept to the minimum needed to support the above.
 >
