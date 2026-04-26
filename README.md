@@ -1,6 +1,6 @@
 <div align="center">
 
-# GET SHIT DONE — Claude-First Fork (GSDL-CC)
+# GET SHIT DONE — Local-First Fork (Get Shit Done Locally for Claude Code)
 
 </div>
 
@@ -9,10 +9,17 @@
 >
 > **What's different here:**
 >
-> - **Claude Code is the primary runtime.** Upstream supports 15+ agent runtimes. This fork keeps that breadth but makes Claude Code the first-class citizen — agents, prompts, and tooling are tuned for it first.
 > - **Local-first research.** Upstream's research agents use Context7 (`mcp__context7__*`) for library docs and WebSearch for web queries. This fork replaces both with a self-hosted stack: `mcp__searxng__*` for web search (no API key, no rate limits) and `mcp__context__*` for library docs. The result is faster research loops with no cloud dependencies.
+> - **Claude Code is the primary runtime.** Upstream supports 15+ agent runtimes. This fork keeps that breadth — no prompts or agents have been modified. Everything here has simply been tested in Claude Code with a local model.
 > - **Research preflight (`/gsd-research-status`).** A command to check your local research stack before running research-heavy workflows — tells you which MCP providers are connected, which are missing, and what to fix.
 > - **Tracks upstream.** Periodic merges pull in upstream features, bug fixes, and new commands. Fork-specific changes are kept to the minimum needed to support the above.
+>
+> **MCP Requirements:** This fork requires two MCP servers to be configured in your `~/.claude/settings.json` or `~/.claude.json`:
+>
+> | Server | Purpose | Package | Install |
+> |--------|---------|---------|---------|
+> | `context` | Library documentation lookup | [`@neuledge/context`](https://github.com/neuledge/context) | `npm i -g @neuledge/context` then `claude mcp add context context serve` |
+> | `searxng` | Web search (no API key) | [`mcp-searxng`](https://github.com/searxng/searxng) | Run a local SearXNG instance, then `claude mcp add searxng npx -y mcp-searxng` |
 >
 > If you're not running a local searxng instance or don't care about MCP alignment, the upstream version at [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done) is the better choice. Everything below is upstream documentation and applies to both.
 
