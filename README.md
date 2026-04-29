@@ -37,7 +37,7 @@
 > node bin/install.js --claude --local   # install to ./.claude/
 > ```
 >
-> For a smaller install aimed at local LLMs or token-sensitive sessions, add `--minimal` (alias `--core-only`) to the install command.
+> **Local model context:** This fork was tested with Claude Code on a local model setup using a 150K context window, which matched my hardware's practical maximum. Claude Code assumes 200K context by default. For more limited-context setups (32K-128K), add `--minimal` to install only the core GSD workflow instead of the full command and agent set. For more details, see the upstream documentation section titled **Minimal Install** farther down this README.
 
 > [!IMPORTANT]
 > **Both `build:hooks` and `build:sdk` are required for source installs** — the installer copies hook files from `hooks/dist/` and expects the SDK CLI at `sdk/dist/cli.js`. Skipping either means missing functionality.
