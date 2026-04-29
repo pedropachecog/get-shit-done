@@ -12,7 +12,7 @@ Output states:
 <execution>
 # Run the research-status CLI
 # This is a visibility-only check — no research is executed
-node "$HOME/.claude/get-shit-done/bin/gsd-tools.cjs" research-status ${ARGS}
+gsd-tools research-status ${ARGS}
 </execution>
 
 <output_contract>

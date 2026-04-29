@@ -145,7 +145,7 @@ searxng MCP is the primary research tool for this fork. Use it first for all web
 | 4th | WebSearch | Fallback when searxng MCP is unavailable | Needs verification |
 
 **searxng MCP flow:**
-1. `mcp__searxng__searxng_web_search` with query (include current year)
+1. `mcp__searxng__searxng_web_search` with query (do not add a year unless the user or domain explicitly requires one)
 2. `mcp__searxng__web_url_read` to fetch full content from promising URLs
 
 **Context flow:**
@@ -762,7 +762,7 @@ Write to: `$PHASE_DIR/$PADDED_PHASE-RESEARCH.md`
 ## Step 7: Commit Research (optional)
 
 ```bash
-gsd-sdk query commit "docs($PHASE): research phase domain" "$PHASE_DIR/$PADDED_PHASE-RESEARCH.md"
+gsd-sdk query commit "docs($PHASE): research phase domain" --files "$PHASE_DIR/$PADDED_PHASE-RESEARCH.md"
 ```
 
 ## Step 8: Return Structured Result

@@ -1,10 +1,11 @@
 {
   "name": "get-shit-done-cc",
-  "version": "1.38.5",
+  "version": "1.39.0-rc.4",
   "description": "A Claude-first, local-first fork of the get-shit-done workflow system for Claude Code and secondary runtime support.",
   "bin": {
     "get-shit-done-cc": "bin/install.js",
-    "gsd-sdk": "bin/gsd-sdk.js"
+    "gsd-sdk": "bin/gsd-sdk.js",
+    "gsd-tools": "bin/gsd-sdk.js"
   },
   "files": [
     "bin",
