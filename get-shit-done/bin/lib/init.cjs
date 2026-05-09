@@ -5,12 +5,24 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const { loadConfig, resolveModelInternal, findPhaseInternal, getRoadmapPhaseInternal, pathExistsInternal, generateSlugInternal, getMilestoneInfo, getMilestonePhaseFilter, stripShippedMilestones, extractCurrentMilestone, normalizePhaseName, planningPaths, planningDir, planningRoot, toPosixPath, output, error, checkAgentsInstalled, phaseTokenMatches } = require('./core.cjs');
+const { loadConfig, resolveModelInternal, findPhaseInternal, getRoadmapPhaseInternal, pathExistsInternal, generateSlugInternal, getMilestoneInfo, getMilestonePhaseFilter, stripShippedMilestones, extractCurrentMilestone, normalizePhaseName, toPosixPath, output, error, checkAgentsInstalled, phaseTokenMatches } = require('./core.cjs');
+const { planningPaths, planningDir, planningRoot } = require('./planning-workspace.cjs');
+const { maskIfSecret } = require('./secrets.cjs');
+const scanPhasePlans = require('./plan-scan.cjs');
+const { stateExtractField } = require('./state-document.cjs');
 
 // Accept all bold/colon variants of the Requirements header (#2769):
 // **Requirements:** / **Requirements**: / **Requirements** : render the
 // same in markdown but differ textually.
 const REQUIREMENTS_HEADER_RE = /^\*\*Requirements:?\*\*[^\S\n]*:?[^\S\n]*([^\n]*)$/m;
+
+function listPhaseSummaryFiles(phaseDir) {
+  return scanPhasePlans(phaseDir).summaryFiles;
+}
+
+function listPhasePlanFiles(phaseDir) {
+  return scanPhasePlans(phaseDir).planFiles;
+}
 
 function getLatestCompletedMilestone(cwd) {
   const milestonesPath = path.join(planningRoot(cwd), 'MILESTONES.md');
@@ -174,20 +186,16 @@ function cmdInitExecutePhase(cwd, phase, raw, options = {}) {
   // Optional --validate: run state validation and include warnings (#1627)
   if (options.validate) {
     try {
-      const { cmdStateValidate } = require('./state.cjs');
-      // Capture validate output by temporarily redirecting
       const statePath = path.join(planningDir(cwd), 'STATE.md');
       if (fs.existsSync(statePath)) {
         const stateContent = fs.readFileSync(statePath, 'utf-8');
-        const { stateExtractField } = require('./state.cjs');
         const status = stateExtractField(stateContent, 'Status') || '';
         result.state_validation_ran = true;
         // Simple inline validation — check for obvious drift
         const warnings = [];
         const phasesPath = planningPaths(cwd).phases;
         if (phaseInfo && phaseInfo.directory && fs.existsSync(path.join(cwd, phaseInfo.directory))) {
-          const files = fs.readdirSync(path.join(cwd, phaseInfo.directory));
-          const diskPlans = files.filter(f => f.match(/-PLAN\.md$/i)).length;
+          const diskPlans = listPhasePlanFiles(path.join(cwd, phaseInfo.directory)).length;
           const totalPlansRaw = stateExtractField(stateContent, 'Total Plans in Phase');
           const totalPlansInPhase = totalPlansRaw ? parseInt(totalPlansRaw, 10) : null;
           if (totalPlansInPhase !== null && diskPlans !== totalPlansInPhase) {
@@ -246,6 +254,23 @@ function cmdInitPlanPhase(cwd, phase, raw, options = {}) {
     : null;
   const phase_req_ids = (reqExtracted && reqExtracted !== 'TBD') ? reqExtracted : null;
 
+  // #3287: compute the canonical directory name with project_code prefix so
+  // the first-touch mkdir in /gsd-plan-phase stays consistent with phase.add.
+  const phaseDirPlan = phaseInfo?.directory || null;
+  const phaseNumberPlan = phaseInfo?.phase_number || null;
+  const phaseNamePlan = phaseInfo?.phase_name || null;
+  const rawProjectCodePlan = config.project_code || '';
+  let expectedPhaseDirPlan = null;
+  if (!phaseDirPlan && phaseNumberPlan && phaseNamePlan) {
+    const paddedNum = normalizePhaseName(phaseNumberPlan);
+    const slug = generateSlugInternal(phaseNamePlan).substring(0, 60);
+    if (slug) {
+      const prefix = rawProjectCodePlan ? `${rawProjectCodePlan}-` : '';
+      const dirName = `${prefix}${paddedNum}-${slug}`;
+      expectedPhaseDirPlan = toPosixPath(path.relative(cwd, path.join(planningPaths(cwd).phases, dirName)));
+    }
+  }
+
   const result = {
     // Models
     researcher_model: resolveModelInternal(cwd, 'gsd-phase-researcher'),
@@ -268,11 +293,12 @@ function cmdInitPlanPhase(cwd, phase, raw, options = {}) {
 
     // Phase info
     phase_found: !!phaseInfo,
-    phase_dir: phaseInfo?.directory || null,
-    phase_number: phaseInfo?.phase_number || null,
-    phase_name: phaseInfo?.phase_name || null,
+    phase_dir: phaseDirPlan,
+    expected_phase_dir: expectedPhaseDirPlan,
+    phase_number: phaseNumberPlan,
+    phase_name: phaseNamePlan,
     phase_slug: phaseInfo?.phase_slug || null,
-    padded_phase: phaseInfo?.phase_number ? normalizePhaseName(phaseInfo.phase_number) : null,
+    padded_phase: phaseNumberPlan ? normalizePhaseName(phaseNumberPlan) : null,
     phase_req_ids,
 
     // Existing artifacts
@@ -332,7 +358,6 @@ function cmdInitPlanPhase(cwd, phase, raw, options = {}) {
     try {
       const statePath = path.join(planningDir(cwd), 'STATE.md');
       if (fs.existsSync(statePath)) {
-        const { stateExtractField } = require('./state.cjs');
         const stateContent = fs.readFileSync(statePath, 'utf-8');
         const warnings = [];
         result.state_validation_ran = true;
@@ -721,20 +746,42 @@ function cmdInitPhaseOp(cwd, phase, raw) {
     }
   }
 
+  // #3287: compute the canonical directory name with project_code prefix so
+  // the first-touch mkdir in /gsd-discuss-phase stays consistent with phase.add.
+  const phaseDir = phaseInfo?.directory || null;
+  const phaseNumber = phaseInfo?.phase_number || null;
+  const phaseName = phaseInfo?.phase_name || null;
+  const rawProjectCode = config.project_code || '';
+  let expectedPhaseDir = null;
+  if (!phaseDir && phaseNumber && phaseName) {
+    const paddedNum = normalizePhaseName(phaseNumber);
+    const slug = generateSlugInternal(phaseName).substring(0, 60);
+    if (slug) {
+      const prefix = rawProjectCode ? `${rawProjectCode}-` : '';
+      const dirName = `${prefix}${paddedNum}-${slug}`;
+      expectedPhaseDir = toPosixPath(path.relative(cwd, path.join(planningPaths(cwd).phases, dirName)));
+    }
+  }
+
   const result = {
     // Config
     commit_docs: config.commit_docs,
-    brave_search: config.brave_search,
-    firecrawl: config.firecrawl,
-    exa_search: config.exa_search,
+    // #2997: secret config keys may be either booleans (availability flags) or
+    // string API keys (when user did `gsd-tools config-set brave_search XXX`).
+    // Pass booleans through; mask string values so the init bundle never echoes
+    // plaintext credentials. SDK init.ts mirrors this masking.
+    brave_search: typeof config.brave_search === 'string' ? maskIfSecret('brave_search', config.brave_search) : config.brave_search,
+    firecrawl: typeof config.firecrawl === 'string' ? maskIfSecret('firecrawl', config.firecrawl) : config.firecrawl,
+    exa_search: typeof config.exa_search === 'string' ? maskIfSecret('exa_search', config.exa_search) : config.exa_search,
 
     // Phase info
     phase_found: !!phaseInfo,
-    phase_dir: phaseInfo?.directory || null,
-    phase_number: phaseInfo?.phase_number || null,
-    phase_name: phaseInfo?.phase_name || null,
+    phase_dir: phaseDir,
+    expected_phase_dir: expectedPhaseDir,
+    phase_number: phaseNumber,
+    phase_name: phaseName,
     phase_slug: phaseInfo?.phase_slug || null,
-    padded_phase: phaseInfo?.phase_number ? normalizePhaseName(phaseInfo.phase_number) : null,
+    padded_phase: phaseNumber ? normalizePhaseName(phaseNumber) : null,
 
     // Existing artifacts
     has_research: phaseInfo?.has_research || false,
@@ -895,8 +942,7 @@ function cmdInitMilestoneOp(cwd, raw) {
       const dirName = diskPhaseDirs.get(canonicalizePhase(num));
       if (!dirName) continue;
       try {
-        const phaseFiles = fs.readdirSync(path.join(phasesDir, dirName));
-        const hasSummary = phaseFiles.some(f => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md');
+        const hasSummary = listPhaseSummaryFiles(path.join(phasesDir, dirName)).length > 0;
         if (hasSummary) completedPhases++;
       } catch { /* intentionally empty */ }
     }
@@ -908,8 +954,7 @@ function cmdInitMilestoneOp(cwd, raw) {
       phaseCount = dirs.length;
       for (const dir of dirs) {
         try {
-          const phaseFiles = fs.readdirSync(path.join(phasesDir, dir));
-          const hasSummary = phaseFiles.some(f => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md');
+          const hasSummary = listPhaseSummaryFiles(path.join(phasesDir, dir)).length > 0;
           if (hasSummary) completedPhases++;
         } catch { /* intentionally empty */ }
       }
@@ -1066,8 +1111,8 @@ function cmdInitManager(cwd, raw) {
       if (dirMatch) {
         const fullDir = path.join(phasesDir, dirMatch);
         const phaseFiles = fs.readdirSync(fullDir);
-        planCount = phaseFiles.filter(f => f.endsWith('-PLAN.md') || f === 'PLAN.md').length;
-        summaryCount = phaseFiles.filter(f => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md').length;
+        planCount = listPhasePlanFiles(fullDir).length;
+        summaryCount = listPhaseSummaryFiles(fullDir).length;
         hasContext = phaseFiles.some(f => f.endsWith('-CONTEXT.md') || f === 'CONTEXT.md');
         hasResearch = phaseFiles.some(f => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md');
 
@@ -1347,8 +1392,8 @@ function cmdInitProgress(cwd, raw) {
       const phasePath = path.join(phasesDir, dir);
       const phaseFiles = fs.readdirSync(phasePath);
 
-      const plans = phaseFiles.filter(f => f.endsWith('-PLAN.md') || f === 'PLAN.md');
-      const summaries = phaseFiles.filter(f => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md');
+      const plans = listPhasePlanFiles(phasePath);
+      const summaries = listPhaseSummaryFiles(phasePath);
       const hasResearch = phaseFiles.some(f => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md');
 
       const status = summaries.length >= plans.length && plans.length > 0 ? 'complete' :
@@ -1626,7 +1671,9 @@ function cmdInitRemoveWorkspace(cwd, name, raw) {
 function buildAgentSkillsBlock(config, agentType, projectRoot) {
   const { validatePath } = require('./security.cjs');
   const os = require('os');
-  const globalSkillsBase = path.join(os.homedir(), '.claude', 'skills');
+  const { getGlobalSkillDir, getGlobalSkillDisplayPath } = require('./runtime-homes.cjs');
+  const runtime = (config && config.runtime) || 'claude';
+  const globalSkillsBase = require('./runtime-homes.cjs').getGlobalSkillsBase(runtime);
 
   if (!config || !config.agent_skills || !agentType) return '';
 
@@ -1641,7 +1688,7 @@ function buildAgentSkillsBlock(config, agentType, projectRoot) {
   for (const skillPath of skillPaths) {
     if (typeof skillPath !== 'string') continue;
 
-    // Support global: prefix for skills installed at ~/.claude/skills/ (#1992)
+    // Support global: prefix for skills installed at the runtime's global skills directory (#1992, #3126)
     if (skillPath.startsWith('global:')) {
       const skillName = skillPath.slice(7);
       // Explicit empty-name guard before regex for clearer error message
@@ -1654,10 +1701,16 @@ function buildAgentSkillsBlock(config, agentType, projectRoot) {
         process.stderr.write(`[agent-skills] WARNING: Invalid global skill name "${skillName}" — skipping\n`);
         continue;
       }
-      const globalSkillDir = path.join(globalSkillsBase, skillName);
+      // Cline is rules-based and has no global skills directory
+      if (globalSkillsBase === null) {
+        process.stderr.write(`[agent-skills] WARNING: Runtime "${runtime}" does not use a skills directory — "global:${skillName}" is not supported on this runtime\n`);
+        continue;
+      }
+      const globalSkillDir = getGlobalSkillDir(runtime, skillName);
       const globalSkillMd = path.join(globalSkillDir, 'SKILL.md');
+      const displayPath = getGlobalSkillDisplayPath(runtime, skillName);
       if (!fs.existsSync(globalSkillMd)) {
-        process.stderr.write(`[agent-skills] WARNING: Global skill not found at "~/.claude/skills/${skillName}/SKILL.md" — skipping\n`);
+        process.stderr.write(`[agent-skills] WARNING: Global skill not found at "${displayPath}/SKILL.md" — skipping\n`);
         continue;
       }
       // Symlink escape guard: validatePath resolves symlinks and enforces
@@ -1668,7 +1721,7 @@ function buildAgentSkillsBlock(config, agentType, projectRoot) {
         process.stderr.write(`[agent-skills] WARNING: Global skill "${skillName}" failed path check (symlink escape?) — skipping\n`);
         continue;
       }
-      validPaths.push({ ref: `${globalSkillDir}/SKILL.md`, display: `~/.claude/skills/${skillName}` });
+      validPaths.push({ ref: `${globalSkillDir}/SKILL.md`, display: displayPath });
       continue;
     }
 
@@ -1734,6 +1787,7 @@ function cmdAgentSkills(cwd, agentType, raw) {
  */
 function buildSkillManifest(cwd, skillsDir = null) {
   const { extractFrontmatter } = require('./frontmatter.cjs');
+  const { getGlobalSkillsBase } = require('./runtime-homes.cjs');
   const os = require('os');
 
   const canonicalRoots = skillsDir ? [{
@@ -1775,13 +1829,13 @@ function buildSkillManifest(cwd, skillsDir = null) {
     },
     {
       root: '~/.claude/skills',
-      path: path.join(os.homedir(), '.claude', 'skills'),
+      path: getGlobalSkillsBase('claude'),
       scope: 'global',
       kind: 'skills',
     },
     {
       root: '~/.codex/skills',
-      path: path.join(os.homedir(), '.codex', 'skills'),
+      path: getGlobalSkillsBase('codex'),
       scope: 'global',
       kind: 'skills',
     },

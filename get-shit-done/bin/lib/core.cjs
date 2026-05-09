@@ -5,37 +5,25 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
 const { execSync, execFileSync, spawnSync } = require('child_process');
-const { MODEL_PROFILES } = require('./model-profiles.cjs');
-
-const WORKSTREAM_SESSION_ENV_KEYS = [
-  'GSD_SESSION_KEY',
-  'CODEX_THREAD_ID',
-  'CLAUDE_SESSION_ID',
-  'CLAUDE_CODE_SSE_PORT',
-  'OPENCODE_SESSION_ID',
-  'GEMINI_SESSION_ID',
-  'CURSOR_SESSION_ID',
-  'WINDSURF_SESSION_ID',
-  'TERM_SESSION_ID',
-  'WT_SESSION',
-  'TMUX_PANE',
-  'ZELLIJ_SESSION_NAME',
-];
-
-let cachedControllingTtyToken = null;
-let didProbeControllingTtyToken = false;
-
-// Track all .planning/.lock files held by this process so they can be removed
-// on exit. process.on('exit') fires even on process.exit(1), unlike try/finally
-// which is skipped when error() calls process.exit(1) inside a locked region (#1916).
-const _heldPlanningLocks = new Set();
-process.on('exit', () => {
-  for (const lockPath of _heldPlanningLocks) {
-    try { fs.unlinkSync(lockPath); } catch { /* already gone */ }
-  }
-});
+const { MODEL_PROFILES, AGENT_TO_PHASE_TYPE, VALID_PHASE_TYPES, AGENT_DEFAULT_TIERS, VALID_AGENT_TIERS, nextTier } = require('./model-profiles.cjs');
+const { MODEL_ALIAS_MAP, RUNTIME_PROFILE_MAP, KNOWN_RUNTIMES, RUNTIMES_WITH_REASONING_EFFORT } = require('./model-catalog.cjs');
+const {
+  resolveWorktreeContext,
+  parseWorktreePorcelain: parseWorktreePorcelainPolicy,
+  planWorktreePrune,
+  executeWorktreePrunePlan,
+  inspectWorktreeHealth,
+} = require('./worktree-safety.cjs');
+// Compatibility shim: new imports should use planning-workspace.cjs directly.
+const {
+  planningDir,
+  planningRoot,
+  planningPaths,
+  withPlanningLock,
+  getActiveWorkstream,
+  setActiveWorkstream,
+} = require('./planning-workspace.cjs');
 
 // ─── Path helpers ────────────────────────────────────────────────────────────
 
@@ -221,8 +209,68 @@ function output(result, raw, rawValue) {
   fs.writeSync(1, data);
 }
 
-function error(message) {
-  fs.writeSync(2, 'Error: ' + message + '\n');
+/**
+ * Frozen enum of typed reason codes used by error() for structured errors.
+ * Each subcommand contributes its own codes; the enum exists so tests can
+ * assert against typed values instead of grepping stderr (#2974).
+ *
+ * Adding a new code:
+ *   - Pick a snake_case lowercase value (the JSON wire form)
+ *   - Group by subsystem prefix (CONFIG_*, SDK_*, etc)
+ *   - Pass it to error(msg, ERROR_REASON.NEW_CODE) at the call site
+ */
+const ERROR_REASON = Object.freeze({
+  // config-get / config-set
+  CONFIG_KEY_NOT_FOUND: 'config_key_not_found',
+  CONFIG_NO_FILE: 'config_no_file',
+  CONFIG_PARSE_FAILED: 'config_parse_failed',
+  CONFIG_INVALID_KEY: 'config_invalid_key',
+  // SDK / gsd-tools dispatch
+  SDK_FAIL_FAST: 'sdk_fail_fast',
+  SDK_UNKNOWN_COMMAND: 'sdk_unknown_command',
+  SDK_MISSING_ARG: 'sdk_missing_arg',
+  // workflow / phase
+  PHASE_NOT_FOUND: 'phase_not_found',
+  SUMMARY_NO_PLANNING: 'summary_no_planning',
+  // graphify
+  GRAPHIFY_NO_GRAPH: 'graphify_no_graph',
+  GRAPHIFY_INVALID_QUERY: 'graphify_invalid_query',
+  // hooks
+  HOOKS_OPT_OUT: 'hooks_opt_out',
+  // security-scan
+  SECURITY_SCAN_FAILED: 'security_scan_failed',
+  // generic
+  USAGE: 'usage',
+  UNKNOWN: 'unknown',
+});
+
+/**
+ * Process-level flag: when true, error() emits structured JSON to stderr
+ * instead of plain "Error: <message>" text. Set by gsd-tools.cjs when the
+ * CLI is invoked with `--json-errors`. Tests opt in to typed-IR error
+ * assertions by passing that flag and parsing the JSON.
+ *
+ * Default off so existing callers and human operators keep their plain-text
+ * diagnostics. The structured form is opt-in for tooling and tests (#2974).
+ */
+let _jsonErrorMode = false;
+function setJsonErrorMode(v) { _jsonErrorMode = !!v; }
+function getJsonErrorMode() { return _jsonErrorMode; }
+
+/**
+ * Emit an error and exit. When the second argument is provided it must be
+ * a value from ERROR_REASON; tests can assert on `result.reason`. When the
+ * process is in JSON-error mode, stderr receives `{ ok: false, reason,
+ * message }` so callers can parse it; otherwise stderr keeps the plain
+ * text form for human operators.
+ */
+function error(message, reason = ERROR_REASON.UNKNOWN) {
+  if (_jsonErrorMode) {
+    const payload = JSON.stringify({ ok: false, reason, message }) + '\n';
+    fs.writeSync(2, payload);
+  } else {
+    fs.writeSync(2, 'Error: ' + message + '\n');
+  }
   process.exit(1);
 }
 
@@ -291,11 +339,14 @@ function _deepMergeConfig(base, overlay) {
   return result;
 }
 
-function loadConfig(cwd) {
+function loadConfig(cwd, options = {}) {
+  const activeWorkstream = Object.prototype.hasOwnProperty.call(options, 'workstream')
+    ? options.workstream
+    : (process.env.GSD_WORKSTREAM || null);
   // When GSD_WORKSTREAM is set, load root config first so workstream config
   // can inherit from it. This prevents users from duplicating model_overrides,
   // workflow.*, etc. across every workstream config (#2714).
-  const ws = process.env.GSD_WORKSTREAM || null;
+  const ws = activeWorkstream;
   let rootParsed = null;
   if (ws) {
     const rootConfigPath = path.join(planningRoot(cwd), 'config.json');
@@ -307,7 +358,7 @@ function loadConfig(cwd) {
     }
   }
 
-  const configPath = path.join(planningDir(cwd), 'config.json');
+  const configPath = path.join(planningDir(cwd, ws), 'config.json');
   const defaults = CONFIG_DEFAULTS;
 
   try {
@@ -460,6 +511,17 @@ function loadConfig(cwd) {
       project_code: get('project_code') ?? defaults.project_code,
       subagent_timeout: get('subagent_timeout', { section: 'workflow', field: 'subagent_timeout' }) ?? defaults.subagent_timeout,
       model_overrides: parsed.model_overrides || null,
+      // #3023 — per-phase-type model map. Six named slots
+      // (planning/discuss/research/execution/verification/completion).
+      // Resolves between per-agent override and profile-derived tier in
+      // resolveModelInternal. Defaults to null so configs without it
+      // behave exactly as today.
+      models: parsed.models || null,
+      // #3024 — dynamic routing block. When `enabled: true`, the
+      // resolveModelForTier() resolver picks tier_models[default_tier]
+      // for the agent and escalates one tier per attempt up to
+      // max_escalations. Disabled by default for backward compat.
+      dynamic_routing: parsed.dynamic_routing || null,
       // #2517 — runtime-aware profiles. `runtime` defaults to null (back-compat).
       // When null, resolveModelInternal preserves today's Claude-native behavior.
       // NOTE: `runtime` and `model_profile_overrides` are intentionally read
@@ -483,18 +545,11 @@ function loadConfig(cwd) {
     // If .planning/ exists, the project is initialized — just missing config.json.
     // When GSD_WORKSTREAM is set and root config was loaded, the workstream config
     // doesn't exist — treat root config as the effective config for this workstream.
-    if (fs.existsSync(planningDir(cwd))) {
+    if (fs.existsSync(planningDir(cwd, ws))) {
       if (rootParsed) {
         // Workstream has no config.json: re-parse using root config as the sole source.
-        // Temporarily clear GSD_WORKSTREAM so planningDir() returns root .planning/,
-        // then reload. This is safe: rootParsed is already the root config object.
-        const savedWs = process.env.GSD_WORKSTREAM;
-        delete process.env.GSD_WORKSTREAM;
-        try {
-          return loadConfig(cwd);
-        } finally {
-          process.env.GSD_WORKSTREAM = savedWs;
-        }
+        // Keep env immutable by explicitly reloading with workstream context cleared.
+        return loadConfig(cwd, { workstream: null });
       }
       return defaults;
     }
@@ -520,6 +575,8 @@ function loadConfig(cwd) {
         context_window: globalDefaults.context_window ?? defaults.context_window,
         subagent_timeout: globalDefaults.subagent_timeout ?? defaults.subagent_timeout,
         model_overrides: globalDefaults.model_overrides || null,
+        models: globalDefaults.models || null,
+        dynamic_routing: globalDefaults.dynamic_routing || null,
         agent_skills: globalDefaults.agent_skills || {},
         response_language: globalDefaults.response_language || null,
       };
@@ -665,16 +722,38 @@ function normalizeMd(content) {
   return text;
 }
 
-function execGit(cwd, args) {
+// Default timeout for worktree-related git subprocess calls (matches worktree-safety.cjs).
+// Prevents `git worktree list --porcelain` and similar calls from blocking the parent
+// process indefinitely when git is stalled (locked index, hung remote, NFS mount freeze).
+// Callers can override via an options bag if needed.
+const DEFAULT_GIT_TIMEOUT_MS = 10000;
+
+/**
+ * Execute a git command with a bounded timeout.
+ *
+ * Return shape: { exitCode, stdout, stderr, timedOut, error }
+ *   - timedOut: true when spawnSync reports SIGTERM + ETIMEDOUT — callers must
+ *               branch on this to surface a structured warning (PRED.k302).
+ *   - error:    spawnSync error object or null
+ *
+ * Backward-compatible: existing callers that only read exitCode/stdout/stderr
+ * continue to work unchanged.
+ */
+function execGit(cwd, args, options = {}) {
+  const timeout = options.timeout ?? DEFAULT_GIT_TIMEOUT_MS;
   const result = spawnSync('git', args, {
     cwd,
     stdio: 'pipe',
     encoding: 'utf-8',
+    timeout,
   });
+  const timedOut = result.signal === 'SIGTERM' && result.error?.code === 'ETIMEDOUT';
   return {
     exitCode: result.status ?? 1,
     stdout: (result.stdout ?? '').toString().trim(),
     stderr: (result.stderr ?? '').toString().trim(),
+    timedOut,
+    error: result.error ?? null,
   };
 }
 
@@ -686,30 +765,11 @@ function execGit(cwd, args) {
  * Returns the main worktree path, or cwd if not in a worktree.
  */
 function resolveWorktreeRoot(cwd) {
-  // If the current directory already has its own .planning/, respect it.
-  // This handles linked worktrees with independent planning state (e.g., Conductor workspaces).
-  if (fs.existsSync(path.join(cwd, '.planning'))) {
-    return cwd;
-  }
-
-  // Check if we're in a linked worktree
-  const gitDir = execGit(cwd, ['rev-parse', '--git-dir']);
-  const commonDir = execGit(cwd, ['rev-parse', '--git-common-dir']);
-
-  if (gitDir.exitCode !== 0 || commonDir.exitCode !== 0) return cwd;
-
-  // In a linked worktree, .git is a file pointing to .git/worktrees/<name>
-  // and git-common-dir points to the main repo's .git directory
-  const gitDirResolved = path.resolve(cwd, gitDir.stdout);
-  const commonDirResolved = path.resolve(cwd, commonDir.stdout);
-
-  if (gitDirResolved !== commonDirResolved) {
-    // We're in a linked worktree — resolve main worktree root
-    // The common dir is the main repo's .git, so its parent is the main worktree root
-    return path.dirname(commonDirResolved);
-  }
-
-  return cwd;
+  const context = resolveWorktreeContext(cwd, {
+    execGit,
+    existsSync: fs.existsSync,
+  });
+  return context.effectiveRoot;
 }
 
 /**
@@ -721,387 +781,40 @@ function resolveWorktreeRoot(cwd) {
  * @returns {{ path: string, branch: string }[]}
  */
 function parseWorktreePorcelain(porcelain) {
-  const entries = [];
-  let current = null;
-  for (const line of porcelain.split('\n')) {
-    if (line.startsWith('worktree ')) {
-      current = { path: line.slice('worktree '.length).trim(), branch: null };
-    } else if (line.startsWith('branch refs/heads/') && current) {
-      current.branch = line.slice('branch refs/heads/'.length).trim();
-    } else if (line === '' && current) {
-      if (current.branch) entries.push(current);
-      current = null;
-    }
-  }
-  // flush last entry if file doesn't end with blank line
-  if (current && current.branch) entries.push(current);
-  return entries;
+  return parseWorktreePorcelainPolicy(porcelain);
 }
 
 /**
- * Remove linked git worktrees whose branch has already been merged into the
- * current HEAD of the main worktree.  Also runs `git worktree prune` to clear
- * any stale references left by manually-deleted worktree directories.
+ * Clear stale worktree metadata references via `git worktree prune`.
  *
- * Safe guards:
- *  - Never removes the main worktree (first entry in --porcelain output).
- *  - Never removes the worktree at process.cwd().
- *  - Never removes a worktree whose branch has unmerged commits.
- *  - Skips detached-HEAD worktrees (no branch name).
+ * Destructive linked-worktree removal is disabled by default for safety.
  *
  * @param {string} repoRoot - absolute path to the main (or any) worktree of
  *   the repository; used as `cwd` for git commands.
- * @returns {string[]} list of worktree paths that were removed
+ * @returns {string[]} list of worktree paths that were removed (always empty)
  */
 function pruneOrphanedWorktrees(repoRoot) {
-  const pruned = [];
-  const cwd = process.cwd();
-
   try {
-    // 1. Get all worktrees in porcelain format
-    const listResult = execGit(repoRoot, ['worktree', 'list', '--porcelain']);
-    if (listResult.exitCode !== 0) return pruned;
-
-    const worktrees = parseWorktreePorcelain(listResult.stdout);
-    if (worktrees.length === 0) {
-      execGit(repoRoot, ['worktree', 'prune']);
-      return pruned;
-    }
-
-    // 2. First entry is the main worktree — never touch it
-    const mainWorktreePath = worktrees[0].path;
-
-    // 3. Check each non-main worktree
-    for (let i = 1; i < worktrees.length; i++) {
-      const { path: wtPath, branch } = worktrees[i];
-
-      // Never remove the worktree for the current process directory
-      if (wtPath === cwd || cwd.startsWith(wtPath + path.sep)) continue;
-
-      // Check if the branch is fully merged into HEAD (main)
-      // git merge-base --is-ancestor <branch> HEAD exits 0 when merged
-      const ancestorCheck = execGit(repoRoot, [
-        'merge-base', '--is-ancestor', branch, 'HEAD',
-      ]);
-
-      if (ancestorCheck.exitCode !== 0) {
-        // Not yet merged — leave it alone
-        continue;
-      }
-
-      // Remove the worktree and delete the branch
-      const removeResult = execGit(repoRoot, ['worktree', 'remove', '--force', wtPath]);
-      if (removeResult.exitCode === 0) {
-        execGit(repoRoot, ['branch', '-D', branch]);
-        pruned.push(wtPath);
-      }
+    const plan = planWorktreePrune(
+      repoRoot,
+      { allowDestructive: false },
+      { execGit, parseWorktreePorcelain }
+    );
+    const pruneResult = executeWorktreePrunePlan(plan, { execGit });
+    if (pruneResult && pruneResult.timedOut) {
+      // AC2: surface structured warning instead of silently swallowing the timeout.
+      // Uses process.stderr.write to match the [gsd-tools] WARNING prefix style.
+      process.stderr.write(
+        '[gsd-tools] WARNING: worktree health check degraded' +
+        ' — git worktree prune timed out after 10s.' +
+        ' Orphaned worktree metadata may remain until the next successful run.\n'
+      );
     }
   } catch { /* never crash the caller */ }
-
-  // 4. Always run prune to clear stale references (e.g. manually-deleted dirs)
-  execGit(repoRoot, ['worktree', 'prune']);
-
-  return pruned;
+  return [];
 }
 
-/**
- * Acquire a file-based lock for .planning/ writes.
- * Prevents concurrent worktrees from corrupting shared planning files.
- * Lock is auto-released after the callback completes.
- */
-function withPlanningLock(cwd, fn) {
-  const lockPath = path.join(planningDir(cwd), '.lock');
-  const lockTimeout = 10000; // 10 seconds
-  const retryDelay = 100;
-  const start = Date.now();
-
-  // Ensure .planning/ exists
-  try { fs.mkdirSync(planningDir(cwd), { recursive: true }); } catch { /* ok */ }
-
-  while (Date.now() - start < lockTimeout) {
-    try {
-      // Atomic create — fails if file exists
-      fs.writeFileSync(lockPath, JSON.stringify({
-        pid: process.pid,
-        cwd,
-        acquired: new Date().toISOString(),
-      }), { flag: 'wx' });
-
-      // Register for exit-time cleanup so process.exit(1) inside a locked region
-      // cannot leave a stale lock file (#1916).
-      _heldPlanningLocks.add(lockPath);
-
-      // Lock acquired — run the function
-      try {
-        return fn();
-      } finally {
-        _heldPlanningLocks.delete(lockPath);
-        try { fs.unlinkSync(lockPath); } catch { /* already released */ }
-      }
-    } catch (err) {
-      if (err.code === 'EEXIST') {
-        // Lock exists — check if stale (>30s old)
-        try {
-          const stat = fs.statSync(lockPath);
-          if (Date.now() - stat.mtimeMs > 30000) {
-            fs.unlinkSync(lockPath);
-            continue; // retry
-          }
-        } catch { continue; }
-
-        // Wait and retry (cross-platform, no shell dependency)
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
-        continue;
-      }
-      throw err;
-    }
-  }
-  // Timeout — force acquire (stale lock recovery)
-  try { fs.unlinkSync(lockPath); } catch { /* ok */ }
-  return fn();
-}
-
-/**
- * Get the .planning directory path, project- and workstream-aware.
- *
- * Resolution order:
- * 1. If GSD_PROJECT is set (env var or explicit `project` arg), routes to
- *    `.planning/{project}/` — supports multi-project workspaces where several
- *    independent projects share a single `.planning/` root directory (e.g.,
- *    an Obsidian vault or monorepo knowledge base used as a command center).
- * 2. If GSD_WORKSTREAM is set, routes to `.planning/workstreams/{ws}/`.
- * 3. Otherwise returns `.planning/`.
- *
- * GSD_PROJECT and GSD_WORKSTREAM can be combined:
- *   `.planning/{project}/workstreams/{ws}/`
- *
- * @param {string} cwd - project root
- * @param {string} [ws] - explicit workstream name; if omitted, checks GSD_WORKSTREAM env var
- * @param {string} [project] - explicit project name; if omitted, checks GSD_PROJECT env var
- */
-function planningDir(cwd, ws, project) {
-  if (project === undefined) project = process.env.GSD_PROJECT || null;
-  if (ws === undefined) ws = process.env.GSD_WORKSTREAM || null;
-
-  // Reject path separators and traversal components in project/workstream names
-  const BAD_SEGMENT = /[/\\]|\.\./;
-  if (project && BAD_SEGMENT.test(project)) {
-    throw new Error(`GSD_PROJECT contains invalid path characters: ${project}`);
-  }
-  if (ws && BAD_SEGMENT.test(ws)) {
-    throw new Error(`GSD_WORKSTREAM contains invalid path characters: ${ws}`);
-  }
-
-  let base = path.join(cwd, '.planning');
-  if (project) base = path.join(base, project);
-  if (ws) base = path.join(base, 'workstreams', ws);
-  return base;
-}
-
-/** Always returns the root .planning/ path, ignoring workstreams and projects. For shared resources. */
-function planningRoot(cwd) {
-  return path.join(cwd, '.planning');
-}
-
-/**
- * Get common .planning file paths, project-and-workstream-aware.
- *
- * All paths route through planningDir(cwd, ws), which honors the GSD_PROJECT
- * env var and active workstream. This matches loadConfig() above (line 256),
- * which has always read config.json via planningDir(cwd). Previously project
- * and config were resolved against the unrouted .planning/ root, which broke
- * `gsd-tools config-get` in multi-project layouts (the CRUD writers and the
- * reader pointed at different files).
- */
-function planningPaths(cwd, ws) {
-  const base = planningDir(cwd, ws);
-  return {
-    planning: base,
-    state: path.join(base, 'STATE.md'),
-    roadmap: path.join(base, 'ROADMAP.md'),
-    project: path.join(base, 'PROJECT.md'),
-    config: path.join(base, 'config.json'),
-    phases: path.join(base, 'phases'),
-    requirements: path.join(base, 'REQUIREMENTS.md'),
-  };
-}
-
-// ─── Active Workstream Detection ─────────────────────────────────────────────
-
-function sanitizeWorkstreamSessionToken(value) {
-  if (value === null || value === undefined) return null;
-  const token = String(value).trim().replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '');
-  return token ? token.slice(0, 160) : null;
-}
-
-function probeControllingTtyToken() {
-  if (didProbeControllingTtyToken) return cachedControllingTtyToken;
-  didProbeControllingTtyToken = true;
-
-  // `tty` reads stdin. When stdin is already non-interactive, spawning it only
-  // adds avoidable failures on the routing hot path and cannot reveal a stable token.
-  if (!(process.stdin && process.stdin.isTTY)) {
-    return cachedControllingTtyToken;
-  }
-
-  try {
-    const ttyPath = execFileSync('tty', [], {
-      encoding: 'utf-8',
-      stdio: ['inherit', 'pipe', 'ignore'],
-    }).trim();
-    if (ttyPath && ttyPath !== 'not a tty') {
-      const token = sanitizeWorkstreamSessionToken(ttyPath.replace(/^\/dev\//, ''));
-      if (token) cachedControllingTtyToken = `tty-${token}`;
-    }
-  } catch {}
-
-  return cachedControllingTtyToken;
-}
-
-function getControllingTtyToken() {
-  for (const envKey of ['TTY', 'SSH_TTY']) {
-    const token = sanitizeWorkstreamSessionToken(process.env[envKey]);
-    if (token) return `tty-${token.replace(/^dev_/, '')}`;
-  }
-
-  return probeControllingTtyToken();
-}
-
-/**
- * Resolve a deterministic session key for workstream-local routing.
- *
- * Order:
- * 1. Explicit runtime/session env vars (`GSD_SESSION_KEY`, `CODEX_THREAD_ID`, etc.)
- * 2. Terminal identity exposed via `TTY` or `SSH_TTY`
- * 3. One best-effort `tty` probe when stdin is interactive
- * 4. `null`, which tells callers to use the legacy shared pointer fallback
- */
-function getWorkstreamSessionKey() {
-  for (const envKey of WORKSTREAM_SESSION_ENV_KEYS) {
-    const raw = process.env[envKey];
-    const token = sanitizeWorkstreamSessionToken(raw);
-    if (token) return `${envKey.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${token}`;
-  }
-
-  return getControllingTtyToken();
-}
-
-function getSessionScopedWorkstreamFile(cwd) {
-  const sessionKey = getWorkstreamSessionKey();
-  if (!sessionKey) return null;
-
-  // Use realpathSync.native so the hash is derived from the canonical filesystem
-  // path. On Windows, path.resolve returns whatever case the caller supplied,
-  // while realpathSync.native returns the case the OS recorded — they differ on
-  // case-insensitive NTFS, producing different hashes and different tmpdir slots.
-  // Fall back to path.resolve when the directory does not yet exist.
-  let planningAbs;
-  try {
-    planningAbs = fs.realpathSync.native(planningRoot(cwd));
-  } catch {
-    planningAbs = path.resolve(planningRoot(cwd));
-  }
-  const projectId = crypto
-    .createHash('sha1')
-    .update(planningAbs)
-    .digest('hex')
-    .slice(0, 16);
-
-  const dirPath = path.join(os.tmpdir(), 'gsd-workstream-sessions', projectId);
-  return {
-    sessionKey,
-    dirPath,
-    filePath: path.join(dirPath, sessionKey),
-  };
-}
-
-function clearActiveWorkstreamPointer(filePath, cleanupDirPath) {
-  try { fs.unlinkSync(filePath); } catch {}
-
-  // Session-scoped pointers for a repo share one tmp directory. Only remove it
-  // when it is empty so clearing or self-healing one session never deletes siblings.
-  // Explicitly check remaining entries rather than relying on rmdirSync throwing
-  // ENOTEMPTY — that error is not raised reliably on Windows.
-  if (cleanupDirPath) {
-    try {
-      const remaining = fs.readdirSync(cleanupDirPath);
-      if (remaining.length === 0) {
-        fs.rmdirSync(cleanupDirPath);
-      }
-    } catch {}
-  }
-}
-
-/**
- * Pointer files are self-healing: invalid names or deleted-workstream pointers
- * are removed on read so the session falls back to `null` instead of carrying
- * silent stale state forward. Session-scoped callers may also prune an empty
- * per-project tmp directory; shared `.planning/active-workstream` callers do not.
- */
-function readActiveWorkstreamPointer(filePath, cwd, cleanupDirPath = null) {
-  try {
-    const name = fs.readFileSync(filePath, 'utf-8').trim();
-    if (!name || !/^[a-zA-Z0-9_-]+$/.test(name)) {
-      clearActiveWorkstreamPointer(filePath, cleanupDirPath);
-      return null;
-    }
-    const wsDir = path.join(planningRoot(cwd), 'workstreams', name);
-    if (!fs.existsSync(wsDir)) {
-      clearActiveWorkstreamPointer(filePath, cleanupDirPath);
-      return null;
-    }
-    return name;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Get the active workstream name.
- *
- * Resolution priority:
- * 1. Session-scoped pointer (tmpdir) when the runtime exposes a stable session key
- * 2. Legacy shared `.planning/active-workstream` file when no session key is available
- *
- * The shared file is intentionally ignored when a session key exists so multiple
- * concurrent sessions do not overwrite each other's active workstream.
- */
-function getActiveWorkstream(cwd) {
-  const sessionScoped = getSessionScopedWorkstreamFile(cwd);
-  if (sessionScoped) {
-    return readActiveWorkstreamPointer(sessionScoped.filePath, cwd, sessionScoped.dirPath);
-  }
-
-  const sharedFilePath = path.join(planningRoot(cwd), 'active-workstream');
-  return readActiveWorkstreamPointer(sharedFilePath, cwd);
-}
-
-/**
- * Set the active workstream. Pass null to clear.
- *
- * When a stable session key is available, this updates a tmpdir-backed
- * session-scoped pointer. Otherwise it falls back to the legacy shared
- * `.planning/active-workstream` file for backward compatibility.
- */
-function setActiveWorkstream(cwd, name) {
-  const sessionScoped = getSessionScopedWorkstreamFile(cwd);
-  const filePath = sessionScoped
-    ? sessionScoped.filePath
-    : path.join(planningRoot(cwd), 'active-workstream');
-
-  if (!name) {
-    clearActiveWorkstreamPointer(filePath, sessionScoped ? sessionScoped.dirPath : null);
-    return;
-  }
-  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-    throw new Error('Invalid workstream name: must be alphanumeric, hyphens, and underscores only');
-  }
-
-  if (sessionScoped) {
-    fs.mkdirSync(sessionScoped.dirPath, { recursive: true });
-  }
-  fs.writeFileSync(filePath, name + '\n', 'utf-8');
-}
+// ─── Planning workspace (pathing + active workstream + lock) moved to planning-workspace.cjs ───
 
 // ─── Phase utilities ──────────────────────────────────────────────────────────
 
@@ -1194,6 +907,17 @@ function phaseTokenMatches(dirName, normalized) {
   return false;
 }
 
+function extractCanonicalPlanId(filename) {
+  const base = filename.replace(/-PLAN\.md$/i, '').replace(/-SUMMARY\.md$/i, '').replace(/\.md$/i, '');
+  const parts = base.split('-').filter(Boolean);
+  const tokenRe = /^\d+[A-Z]?(?:\.\d+)*$/i;
+  const phaseIdx = parts.findIndex(p => tokenRe.test(p));
+  if (phaseIdx >= 0 && phaseIdx + 1 < parts.length && tokenRe.test(parts[phaseIdx + 1])) {
+    return `${parts[phaseIdx]}-${parts[phaseIdx + 1]}`;
+  }
+  return base;
+}
+
 function searchPhaseInDir(baseDir, relBase, normalized) {
   try {
     const dirs = readSubdirectories(baseDir, true);
@@ -1214,11 +938,16 @@ function searchPhaseInDir(baseDir, relBase, normalized) {
     const summaries = unsortedSummaries.sort();
 
     const completedPlanIds = new Set(
-      summaries.map(s => s.replace('-SUMMARY.md', '').replace('SUMMARY.md', ''))
+      summaries.flatMap(s => {
+        const exact = s.replace('-SUMMARY.md', '').replace('SUMMARY.md', '');
+        const canonical = extractCanonicalPlanId(s);
+        return canonical === exact ? [exact] : [exact, canonical];
+      })
     );
     const incompletePlans = plans.filter(p => {
       const planId = p.replace('-PLAN.md', '').replace('PLAN.md', '');
-      return !completedPlanIds.has(planId);
+      const canonical = extractCanonicalPlanId(p);
+      return !completedPlanIds.has(planId) && !completedPlanIds.has(canonical);
     });
 
     return {
@@ -1558,92 +1287,9 @@ function checkAgentsInstalled() {
 
 // ─── Model alias resolution ───────────────────────────────────────────────────
 
-/**
- * Map short model aliases to full model IDs.
- * Updated each release to match current model versions.
- * Users can override with model_overrides in config.json for custom/latest models.
- */
-const MODEL_ALIAS_MAP = {
-  'opus': 'claude-opus-4-7',
-  'sonnet': 'claude-sonnet-4-6',
-  'haiku': 'claude-haiku-4-5',
-};
-
-/**
- * #2517 — runtime-aware tier resolution.
- * Maps `model_profile` tiers (opus/sonnet/haiku) to runtime-native model IDs and
- * (where supported) reasoning_effort settings.
- *
- * Each entry: { model: <id>, reasoning_effort?: <level> }
- *
- * `claude` mirrors MODEL_ALIAS_MAP — present for symmetry so `runtime: "claude"`
- * resolves through the same code path. `codex` defaults are taken from the spec
- * in #2517. Unknown runtimes fall back to the Claude alias to avoid emitting
- * provider-specific IDs the runtime cannot accept.
- */
-const RUNTIME_PROFILE_MAP = {
-  claude: Object.fromEntries(
-    Object.entries(MODEL_ALIAS_MAP).map(([tier, model]) => [tier, { model }])
-  ),
-  codex: {
-    opus:   { model: 'gpt-5.4',        reasoning_effort: 'xhigh' },
-    sonnet: { model: 'gpt-5.3-codex',  reasoning_effort: 'medium' },
-    haiku:  { model: 'gpt-5.4-mini',   reasoning_effort: 'medium' },
-  },
-  gemini: {
-    opus:   { model: 'gemini-3-pro' },
-    sonnet: { model: 'gemini-3-flash' },
-    haiku:  { model: 'gemini-2.5-flash-lite' },
-  },
-  qwen: {
-    opus:   { model: 'qwen3-max-2026-01-23' },
-    sonnet: { model: 'qwen3-coder-plus' },
-    haiku:  { model: 'qwen3-coder-next' },
-  },
-  opencode: {
-    opus:   { model: 'anthropic/claude-opus-4-7' },
-    sonnet: { model: 'anthropic/claude-sonnet-4-6' },
-    haiku:  { model: 'anthropic/claude-haiku-4-5' },
-  },
-  copilot: {
-    opus:   { model: 'claude-opus-4-7' },
-    sonnet: { model: 'claude-sonnet-4-6' },
-    haiku:  { model: 'claude-haiku-4-5' },
-  },
-};
-
-const RUNTIMES_WITH_REASONING_EFFORT = new Set(['codex']);
-
-/**
- * Tier enum allowed under `model_profile_overrides[runtime][tier]`. Mirrors the
- * regex in `config-schema.cjs` (DYNAMIC_KEY_PATTERNS) so loadConfig surfaces the
- * same constraint at read time, not only at config-set time (review finding #10).
- */
 const RUNTIME_OVERRIDE_TIERS = new Set(['opus', 'sonnet', 'haiku']);
-
-/**
- * Allowlist of runtime names the install pipeline currently knows how to emit
- * native model IDs for. Synced with `getDirName` in `bin/install.js` and the
- * runtime list in `docs/CONFIGURATION.md`. Free-string runtimes outside this
- * set are still accepted (#2517 deliberately leaves the runtime field open) —
- * a warning fires once at loadConfig so a typo like `runtime: "codx"` does not
- * silently fall back to Claude defaults (review findings #10, #13).
- */
-const KNOWN_RUNTIMES = new Set([
-  'claude', 'codex', 'opencode', 'kilo', 'gemini', 'qwen',
-  'copilot', 'cursor', 'windsurf', 'augment', 'trae', 'codebuddy',
-  'antigravity', 'cline',
-]);
-
 const _warnedConfigKeys = new Set();
-/**
- * Emit a one-time stderr warning for unknown runtime/tier keys in a parsed
- * config blob. Idempotent across calls — the same (file, key) pair only warns
- * once per process so loadConfig can be called repeatedly without spamming.
- *
- * Does NOT reject — preserves back-compat for users on a runtime not yet in the
- * allowlist (the new-runtime case must always be possible without code changes).
- */
+
 function _warnUnknownProfileOverrides(parsed, configLabel) {
   if (!parsed || typeof parsed !== 'object') return;
 
@@ -1765,10 +1411,37 @@ function resolveModelInternal(cwd, agentType) {
     return override;
   }
 
-  // 2. Compute the tier (opus/sonnet/haiku) for this agent under the active profile.
+  // 2. Compute the tier (opus/sonnet/haiku/inherit) for this agent.
+  //
+  // #3023: phase-type slot can override the profile-derived tier.
+  // Precedence: per-agent override (above) > phase-type slot > profile.
+  // Phase-type values are tier aliases (opus/sonnet/haiku/inherit) — same
+  // shape as model_profile output — so the runtime-resolution chain
+  // (step 3), resolve_model_ids handling (step 4), and profile lookup
+  // (step 5) all stay correct without further branching.
   const profile = String(config.model_profile || 'balanced').toLowerCase();
   const agentModels = MODEL_PROFILES[agentType];
-  const tier = agentModels ? (agentModels[profile] || agentModels['balanced']) : null;
+  const phaseType = AGENT_TO_PHASE_TYPE[agentType];
+  const phaseTypeTier = (phaseType && config.models && typeof config.models === 'object')
+    ? config.models[phaseType]
+    : undefined;
+  // Only honor phase-type tier if it's one of the recognized aliases.
+  // Anything else falls through to profile lookup so a typo doesn't
+  // silently break tier resolution.
+  const VALID_TIERS = new Set(['opus', 'sonnet', 'haiku', 'inherit']);
+  // Resolve tier: phase-type wins when valid; else profile-derived; else
+  // (when profile === 'inherit') propagate inherit so the later short-
+  // circuit fires. CR Major (#3030): a config like
+  //   { model_profile: 'inherit', models: { execution: 'opus' } }
+  // must honor the phase-type opus, not return 'inherit'. Synthesizing
+  // tier='inherit' only when there's no phase-type override keeps the
+  // original inherit semantics intact while letting a valid phase-type
+  // tier win.
+  const tier = (phaseTypeTier && VALID_TIERS.has(phaseTypeTier))
+    ? phaseTypeTier
+    : (profile === 'inherit'
+      ? 'inherit'
+      : (agentModels ? (agentModels[profile] || agentModels['balanced']) : null));
 
   // 3. Runtime-aware resolution (#2517) — only when `runtime` is explicitly set
   // to a non-Claude runtime. `runtime: "claude"` is the implicit default and is
@@ -1776,8 +1449,10 @@ function resolveModelInternal(cwd, agentType) {
   // "omit"` (review finding #4). Deliberate ordering for non-Claude runtimes:
   // explicit opt-in beats `resolve_model_ids: "omit"` so users on Codex installs
   // that auto-set "omit" can still flip on tiered behavior by setting runtime
-  // alone. inherit profile is preserved verbatim.
-  if (config.runtime && config.runtime !== 'claude' && profile !== 'inherit' && tier) {
+  // alone. Gate on tier !== 'inherit' (not profile !== 'inherit') so a
+  // valid phase-type tier flips runtime resolution on even when the
+  // profile is inherit.
+  if (config.runtime && config.runtime !== 'claude' && tier && tier !== 'inherit') {
     const entry = _resolveRuntimeTier(config, tier);
     if (entry?.model) return entry.model;
     // Unknown runtime with no user-supplied overrides — fall through to Claude-safe
@@ -1792,8 +1467,15 @@ function resolveModelInternal(cwd, agentType) {
   }
 
   // 5. Profile lookup (Claude-native default).
-  if (!agentModels) return 'sonnet';
-  if (profile === 'inherit') return 'inherit';
+  if (!agentModels) {
+    return profile === 'quality' ? 'opus'
+      : profile === 'budget' ? 'haiku'
+      : profile === 'inherit' ? 'inherit'
+      : 'sonnet';
+  }
+  // Gate on tier (not profile) so a valid phase-type override beats
+  // profile=inherit (#3030 CR Major).
+  if (tier === 'inherit') return 'inherit';
   // `tier` is guaranteed truthy here: agentModels exists, and MODEL_PROFILES
   // entries always define `balanced`, so `agentModels[profile] || agentModels.balanced`
   // resolves to a string. Keep the local for readability — no defensive fallback.
@@ -1805,6 +1487,94 @@ function resolveModelInternal(cwd, agentType) {
     return MODEL_ALIAS_MAP[alias] || alias;
   }
 
+  return alias;
+}
+
+/**
+ * #3024 — Resolve a model for a specific dynamic-routing attempt.
+ *
+ * The orchestrator (workflow agent) tracks the attempt counter. On
+ * the first spawn, it calls with attempt=0. If the orchestrator detects
+ * a soft failure (verification inconclusive, plan-check FLAG, etc.),
+ * it re-spawns with attempt=1, which escalates the agent's tier one
+ * step up. `max_escalations` caps how many escalations are allowed.
+ *
+ * Resolution precedence (highest → lowest):
+ *   1. config.model_overrides[agent]              (full IDs accepted)
+ *   2. dynamic_routing.tier_models[escalated_tier] (when enabled)
+ *   3. models[phase_type] / model_profile          (existing chain via
+ *                                                    resolveModelInternal)
+ *
+ * When dynamic_routing is null/disabled, this function is identical
+ * to resolveModelInternal — orchestrators can call it unconditionally
+ * without breaking back-compat.
+ *
+ * @param {string} cwd - Project directory.
+ * @param {string} agentType - Agent name (e.g. 'gsd-verifier').
+ * @param {number} [attempt=0] - 0 for first spawn; 1+ for escalation.
+ *                               Capped internally at max_escalations.
+ * @returns {string} Model alias (opus/sonnet/haiku) or full ID.
+ */
+function resolveModelForTier(cwd, agentType, attempt) {
+  const config = loadConfig(cwd);
+  const attemptN = Number.isInteger(attempt) && attempt > 0 ? attempt : 0;
+
+  // Per-agent override always wins — same as resolveModelInternal step 1.
+  // User-supplied full IDs bypass the entire tier mechanism.
+  const override = config.model_overrides?.[agentType];
+  if (override) return override;
+
+  const dr = config.dynamic_routing;
+  // Disabled / missing / non-object → fall back to the existing resolver.
+  if (!dr || typeof dr !== 'object' || dr.enabled !== true) {
+    return resolveModelInternal(cwd, agentType);
+  }
+
+  const tierModels = dr.tier_models;
+  if (!tierModels || typeof tierModels !== 'object') {
+    // tier_models missing — can't dynamic-route; fall back.
+    return resolveModelInternal(cwd, agentType);
+  }
+
+  const defaultTier = AGENT_DEFAULT_TIERS[agentType];
+  if (!defaultTier || !VALID_AGENT_TIERS.has(defaultTier)) {
+    // Unmapped agent — no default tier; fall back so we don't silently
+    // pick the wrong model.
+    return resolveModelInternal(cwd, agentType);
+  }
+
+  // Cap effective escalation at max_escalations (default 1). Beyond
+  // the cap, the resolver returns the model for the cap level so the
+  // orchestrator can log "max escalations reached" without burning
+  // further budget.
+  //
+  // CR Major (#3031): `escalate_on_failure: false` is the kill-switch
+  // for escalation — when false, every attempt resolves to the default
+  // tier regardless of the attempt counter. Without this guard, an
+  // orchestrator that blindly bumps the counter on retry would silently
+  // escalate even though the user opted out.
+  const maxEscalations = Number.isInteger(dr.max_escalations) && dr.max_escalations >= 0
+    ? dr.max_escalations
+    : 1;
+  const escalationEnabled = dr.escalate_on_failure !== false;
+  const effectiveAttempt = escalationEnabled
+    ? Math.min(attemptN, maxEscalations)
+    : 0;
+
+  // Walk the escalation chain N times from the default tier.
+  let tier = defaultTier;
+  for (let i = 0; i < effectiveAttempt; i += 1) {
+    const next = nextTier(tier);
+    if (!next || next === tier) break; // already at top
+    tier = next;
+  }
+
+  const alias = tierModels[tier];
+  if (typeof alias !== 'string' || alias.length === 0) {
+    // Misconfigured tier_models — missing slot. Fall back rather
+    // than emit an empty model id.
+    return resolveModelInternal(cwd, agentType);
+  }
   return alias;
 }
 
@@ -1833,11 +1603,38 @@ function resolveReasoningEffortInternal(cwd, agentType) {
   if (config.model_overrides?.[agentType]) return null;
 
   const profile = String(config.model_profile || 'balanced').toLowerCase();
-  if (profile === 'inherit') return null;
   const agentModels = MODEL_PROFILES[agentType];
   if (!agentModels) return null;
-  const tier = agentModels[profile] || agentModels['balanced'];
-  if (!tier) return null;
+
+  // #3023 (CR Major): mirror the phase-type tier lookup from
+  // resolveModelInternal. Without this, `model` and `reasoning_effort`
+  // derive from different tier sources on Codex when models.<phase_type>
+  // overrides the profile.
+  //
+  // #3030 CR follow-up: do NOT short-circuit on profile === 'inherit'
+  // before reading the phase-type tier. A config like
+  //   { model_profile: 'inherit', models: { execution: 'opus' } }
+  // must produce the opus runtime effort, not null. Compute tier from
+  // phase-type first; only fall back to profile when there's no valid
+  // phase-type override; only return null when the resolved tier is
+  // 'inherit' or unknown.
+  const phaseType = AGENT_TO_PHASE_TYPE[agentType];
+  const phaseTypeTier = (phaseType && config.models && typeof config.models === 'object')
+    ? config.models[phaseType]
+    : undefined;
+  // Explicit phase-type 'inherit' is the user opting out of tier-based
+  // effort for this phase — return null instead of falling through to
+  // profile (which would silently emit the profile's effort and
+  // contradict the user's choice).
+  if (phaseTypeTier === 'inherit') return null;
+  const VALID_TIERS = new Set(['opus', 'sonnet', 'haiku']);
+  const tier = (phaseTypeTier && VALID_TIERS.has(phaseTypeTier))
+    ? phaseTypeTier
+    : (profile === 'inherit'
+      ? 'inherit'
+      : (agentModels[profile] || agentModels['balanced']));
+  // 'inherit' (from profile fallback) yields no runtime effort.
+  if (!tier || tier === 'inherit') return null;
 
   const entry = _resolveRuntimeTier(config, tier);
   return entry?.reasoning_effort || null;
@@ -1983,10 +1780,62 @@ function getMilestoneInfo(cwd) {
  * to the current milestone based on ROADMAP.md phase headings.
  * If no ROADMAP exists or no phases are listed, returns a pass-all filter.
  */
-function getMilestonePhaseFilter(cwd) {
+function getMilestonePhaseFilter(cwd, versionOverride) {
   const milestonePhaseNums = new Set();
+  let missingExplicitVersion = false;
   try {
-    const roadmap = extractCurrentMilestone(fs.readFileSync(path.join(planningDir(cwd), 'ROADMAP.md'), 'utf-8'), cwd);
+    const roadmapPath = path.join(planningDir(cwd), 'ROADMAP.md');
+    const roadmapContent = fs.readFileSync(roadmapPath, 'utf-8');
+    let roadmap = extractCurrentMilestone(roadmapContent, cwd);
+
+    if (versionOverride) {
+      const escapedVersion = escapeRegex(versionOverride);
+      const sectionPattern = new RegExp(`(^#{1,3}\\s+.*${escapedVersion}[^\\n]*)`, 'mi');
+      const sectionMatch = roadmapContent.match(sectionPattern);
+      if (!sectionMatch) {
+        // Only treat this as an error case when the roadmap is milestone-versioned.
+        // Older/flat roadmap formats without vX.Y milestone headings should keep
+        // legacy pass-through behavior for milestone.complete.
+        const hasVersionedMilestones = /^#{1,3}\s+.*v\d+\.\d+/mi.test(roadmapContent);
+        if (hasVersionedMilestones) {
+          roadmap = '';
+          missingExplicitVersion = true;
+        }
+      } else {
+        const sectionStart = sectionMatch.index;
+        const headingLevel = sectionMatch[1].match(/^(#{1,3})\s/)[1].length;
+        const restContent = roadmapContent.slice(sectionStart + sectionMatch[0].length);
+        const nextMilestonePattern = new RegExp(`^#{1,${headingLevel}}\\s+(?!Phase\\s+\\S)(?:.*v\\d+\\.\\d+|✅|📋|🚧)`, 'i');
+
+        let sectionEnd = roadmapContent.length;
+        let fenceChar = null;
+        let fenceLen = 0;
+        let charOffset = 0;
+        for (const line of restContent.split('\n')) {
+          const fenceMatch = line.match(/^\s{0,3}((?:`{3,}|~{3,}))(.*)/);
+          if (fenceMatch) {
+            const char = fenceMatch[1][0];
+            const len = fenceMatch[1].length;
+            const trailing = fenceMatch[2] || '';
+            if (!fenceChar) {
+              fenceChar = char;
+              fenceLen = len;
+            } else if (char === fenceChar && len >= fenceLen && /^\s*$/.test(trailing)) {
+              fenceChar = null;
+              fenceLen = 0;
+            }
+          } else if (!fenceChar && nextMilestonePattern.test(line)) {
+            sectionEnd = sectionStart + sectionMatch[0].length + charOffset;
+            break;
+          }
+          charOffset += line.length + 1;
+        }
+
+        const currentSection = roadmapContent.slice(sectionStart, sectionEnd);
+        roadmap = currentSection;
+      }
+    }
+
     // Match both numeric phases (Phase 1:) and custom IDs (Phase PROJ-42:)
     const phasePattern = /#{2,4}\s*Phase\s+([\w][\w.-]*)\s*:/gi;
     let m;
@@ -1998,6 +1847,7 @@ function getMilestonePhaseFilter(cwd) {
   if (milestonePhaseNums.size === 0) {
     const passAll = () => true;
     passAll.phaseCount = 0;
+    passAll.missingExplicitVersion = missingExplicitVersion;
     return passAll;
   }
 
@@ -2015,6 +1865,7 @@ function getMilestonePhaseFilter(cwd) {
     return false;
   }
   isDirInMilestone.phaseCount = milestonePhaseNums.size;
+  isDirInMilestone.missingExplicitVersion = missingExplicitVersion;
   return isDirInMilestone;
 }
 
@@ -2123,6 +1974,9 @@ function timeAgo(date) {
 module.exports = {
   output,
   error,
+  ERROR_REASON,
+  setJsonErrorMode,
+  getJsonErrorMode,
   safeReadFile,
   loadConfig,
   isGitIgnored,
@@ -2138,6 +1992,7 @@ module.exports = {
   getArchivedPhaseDirs,
   getRoadmapPhaseInternal,
   resolveModelInternal,
+  resolveModelForTier,
   resolveReasoningEffortInternal,
   RUNTIME_PROFILE_MAP,
   RUNTIMES_WITH_REASONING_EFFORT,
@@ -2155,6 +2010,7 @@ module.exports = {
   toPosixPath,
   extractOneLinerFromBody,
   resolveWorktreeRoot,
+  // Deprecated re-exports — prefer direct import from planning-workspace.cjs
   withPlanningLock,
   findProjectRoot,
   detectSubRepos,
@@ -2176,4 +2032,5 @@ module.exports = {
   atomicWriteFileSync,
   timeAgo,
   pruneOrphanedWorktrees,
+  inspectWorktreeHealth,
 };

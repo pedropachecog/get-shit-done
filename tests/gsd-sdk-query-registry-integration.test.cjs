@@ -1,6 +1,6 @@
 /**
  * Drift guard: every `gsd-sdk query <cmd>` reference in the repo must
- * resolve to a handler registered in sdk/src/query/index.ts.
+ * resolve to a handler registered in sdk/src/query/registry-assembly.ts.
  *
  * The set of commands workflows/agents/commands call must equal the set
  * the SDK registry exposes. New references with no handler — or handlers
@@ -13,7 +13,8 @@ const fs = require('fs');
 const path = require('path');
 
 const REPO_ROOT = path.join(__dirname, '..');
-const REGISTRY_FILE = path.join(REPO_ROOT, 'sdk', 'src', 'query', 'index.ts');
+const REGISTRY_FILE = path.join(REPO_ROOT, 'sdk', 'src', 'query', 'registry-assembly.ts');
+const COMMAND_ALIASES_FILE = path.join(REPO_ROOT, 'get-shit-done', 'bin', 'lib', 'command-aliases.generated.cjs');
 
 // Prose tokens that repeatedly appear after `gsd-sdk query` in English
 // documentation but aren't real command names.
@@ -22,6 +23,7 @@ const PROSE_ALLOWLIST = new Set([
   'intel',
   'into',
   'or',
+  'init',   // bare "init" appears in prose examples; real commands are init.<subcommand>
   'init.',
 ]);
 
@@ -41,9 +43,64 @@ const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build']);
 function collectRegisteredNames() {
   const src = fs.readFileSync(REGISTRY_FILE, 'utf8');
   const names = new Set();
+
+  // Static registrations in index.ts (legacy style, may still exist)
   const re = /registry\.register\(\s*['"]([^'"]+)['"]/g;
   let m;
   while ((m = re.exec(src)) !== null) names.add(m[1]);
+
+  // Catalog-based registrations: parse known static catalogs directly.
+  const catalogFileByVar = {
+    FOUNDATION_STATIC_CATALOG: path.join(REPO_ROOT, 'sdk', 'src', 'query', 'command-static-catalog-foundation.ts'),
+    STATE_SUPPORT_STATIC_CATALOG: path.join(REPO_ROOT, 'sdk', 'src', 'query', 'command-static-catalog-foundation.ts'),
+    MUTATION_SURFACES_STATIC_CATALOG: path.join(REPO_ROOT, 'sdk', 'src', 'query', 'command-static-catalog-foundation.ts'),
+    VERIFY_DECISION_STATIC_CATALOG: path.join(REPO_ROOT, 'sdk', 'src', 'query', 'command-static-catalog-foundation.ts'),
+    DECISION_ROUTING_STATIC_CATALOG: path.join(REPO_ROOT, 'sdk', 'src', 'query', 'command-static-catalog-foundation.ts'),
+    DOMAIN_STATIC_CATALOG: path.join(REPO_ROOT, 'sdk', 'src', 'query', 'command-static-catalog-domain.ts'),
+  };
+
+  for (const [catalogVarName, cf] of Object.entries(catalogFileByVar)) {
+    try {
+      const catSrc = fs.readFileSync(cf, 'utf8');
+      const exportRe = new RegExp(`export const ${catalogVarName}:`, 'm');
+      if (!exportRe.test(catSrc)) continue;
+      const entryRe = /\[\s*['"]([^'"]+)['"]/g;
+      let em;
+      while ((em = entryRe.exec(catSrc)) !== null) {
+        names.add(em[1]);
+      }
+    } catch {
+      // File not found, skip.
+    }
+  }
+
+  // Manifest-generated family aliases registered via loop in index.ts.
+  // Keep this in sync with command-manifest-driven routing seams.
+  try {
+    // eslint-disable-next-line global-require, import/no-dynamic-require
+    const aliases = require(COMMAND_ALIASES_FILE);
+    const familyArrays = [
+      aliases.STATE_COMMAND_ALIASES,
+      aliases.VERIFY_COMMAND_ALIASES,
+      aliases.INIT_COMMAND_ALIASES,
+      aliases.PHASE_COMMAND_ALIASES,
+      aliases.PHASES_COMMAND_ALIASES,
+      aliases.VALIDATE_COMMAND_ALIASES,
+      aliases.ROADMAP_COMMAND_ALIASES,
+    ];
+    for (const arr of familyArrays) {
+      if (!Array.isArray(arr)) continue;
+      for (const entry of arr) {
+        if (entry?.canonical) names.add(entry.canonical);
+        if (Array.isArray(entry?.aliases)) {
+          for (const alias of entry.aliases) names.add(alias);
+        }
+      }
+    }
+  } catch {
+    // If generated aliases are unavailable, fall back to static extraction only.
+  }
+
   return names;
 }
 
@@ -128,7 +185,7 @@ describe('gsd-sdk query registry integration', () => {
     assert.strictEqual(
       offenders.length, 0,
       'Referenced `gsd-sdk query <cmd>` tokens with no handler in ' +
-      'sdk/src/query/index.ts. Either register the handler or remove ' +
+      'sdk/src/query/registry-assembly.ts. Either register the handler or remove ' +
       'the reference.\n\n' + offenders.join('\n')
     );
   });

@@ -17,7 +17,6 @@
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 
 import { MODEL_PROFILES } from './config-query.js';
@@ -25,6 +24,7 @@ import { GSDError, ErrorClassification } from '../errors.js';
 import { extractFrontmatter, parseMustHavesBlock } from './frontmatter.js';
 import { escapeRegex, normalizePhaseName, planningPaths, resolvePathUnderProject } from './helpers.js';
 import type { QueryHandler } from './utils.js';
+import { resolveBundledAgentsDir } from '../sdk-package-compatibility.js';
 
 /** Max length for key_links regex patterns (ReDoS mitigation). */
 const MAX_KEY_LINK_PATTERN_LEN = 512;
@@ -790,8 +790,7 @@ export const validateHealth: QueryHandler = async (args, projectDir, workstream)
  */
 function getAgentsDirForValidateAgents(): string {
   if (process.env.GSD_AGENTS_DIR) return process.env.GSD_AGENTS_DIR;
-  const here = dirname(fileURLToPath(import.meta.url));
-  return resolve(here, '..', '..', '..', 'agents');
+  return resolveBundledAgentsDir();
 }
 
 /**
@@ -835,6 +834,62 @@ export const validateAgents: QueryHandler = async (_args, _projectDir) => {
       installed,
       missing,
       expected,
+    },
+  };
+};
+
+/**
+ * Classify the running session's context utilization against the
+ * thresholds documented in #2792:
+ *   < 60%   healthy
+ *   60–70%  warning   → recommend /gsd-thread
+ *   ≥ 70%   critical  → reasoning quality may degrade ("fracture point")
+ *
+ * Args: --tokens-used <int> --context-window <int>
+ *
+ * The model self-reports both numbers — the SDK has no privileged access
+ * to either. Recommendation copy is owned by this handler (the renderer)
+ * so it can change without touching the math layer.
+ *
+ * Mirror of get-shit-done/bin/lib/context-utilization.cjs (the legacy
+ * gsd-tools.cjs path uses the CJS module). Keep both in sync.
+ */
+function parseFlagInt(args: string[], flag: string): number | null {
+  const idx = args.indexOf(flag);
+  if (idx === -1 || idx + 1 >= args.length) return null;
+  const v = Number(args[idx + 1]);
+  return Number.isInteger(v) ? v : null;
+}
+
+const CONTEXT_RECOMMENDATIONS: Record<string, string | null> = {
+  healthy: null,
+  warning: 'Context is approaching the fracture zone — consider /gsd-thread to continue in a fresh window.',
+  critical: 'Reasoning quality may degrade past 70% utilization (fracture point). Run /gsd-thread now to preserve output quality.',
+};
+
+export const validateContext: QueryHandler = async (args, _projectDir) => {
+  const tokensUsed = parseFlagInt(args, '--tokens-used');
+  const contextWindow = parseFlagInt(args, '--context-window');
+  if (tokensUsed === null || tokensUsed < 0) {
+    throw new GSDError(
+      '--tokens-used <non-negative integer> is required for `validate.context`',
+      ErrorClassification.Validation,
+    );
+  }
+  if (contextWindow === null || contextWindow <= 0) {
+    throw new GSDError(
+      '--context-window <positive integer> is required for `validate.context`',
+      ErrorClassification.Validation,
+    );
+  }
+  const ratio = Math.min(tokensUsed / contextWindow, 1);
+  const percent = Math.min(Math.round(ratio * 100), 100);
+  const state = ratio < 0.60 ? 'healthy' : ratio < 0.70 ? 'warning' : 'critical';
+  return {
+    data: {
+      percent,
+      state,
+      recommendation: CONTEXT_RECOMMENDATIONS[state],
     },
   };
 };

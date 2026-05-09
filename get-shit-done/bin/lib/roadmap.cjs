@@ -4,7 +4,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const { escapeRegex, normalizePhaseName, planningPaths, withPlanningLock, output, error, findPhaseInternal, stripShippedMilestones, extractCurrentMilestone, replaceInCurrentMilestone, phaseTokenMatches, atomicWriteFileSync } = require('./core.cjs');
+const { escapeRegex, normalizePhaseName, output, error, findPhaseInternal, stripShippedMilestones, extractCurrentMilestone, replaceInCurrentMilestone, phaseTokenMatches, atomicWriteFileSync } = require('./core.cjs');
+const { planningPaths, withPlanningLock } = require('./planning-workspace.cjs');
+const scanPhasePlans = require('./plan-scan.cjs');
 
 /**
  * Coerce an arbitrary YAML scalar/object into a string for cross-cutting
@@ -33,6 +35,20 @@ function coerceTruthToString(t) {
     }
   }
   return '';
+}
+
+function countPhasePlansAndSummaries(phaseDir) {
+  const { planCount, summaryCount } = scanPhasePlans(phaseDir);
+  // hasContext and hasResearch are not plan-scan concerns — read the directory
+  // once for the non-plan metadata that cmdRoadmapAnalyze needs.
+  let phaseFiles = [];
+  try { phaseFiles = fs.readdirSync(phaseDir); } catch { /* empty */ }
+  return {
+    planCount,
+    summaryCount,
+    hasContext: phaseFiles.some(f => f.endsWith('-CONTEXT.md') || f === 'CONTEXT.md'),
+    hasResearch: phaseFiles.some(f => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md'),
+  };
 }
 
 /**
@@ -85,6 +101,11 @@ function searchPhaseInContent(content, escapedPhase, phaseNum) {
   const goalMatch = section.match(/\*\*Goal(?::\*\*|\*\*:)\s*([^\n]+)/i);
   const goal = goalMatch ? goalMatch[1].trim() : null;
 
+  // Mode: vertical-MVP slice mode flag. Lowercased + trimmed for canonical
+  // comparison; unrecognized values are preserved verbatim for forward-compat.
+  const modeMatch = section.match(/\*\*Mode(?::\*\*|\*\*:)\s*([^\n]+)/i);
+  const mode = modeMatch ? modeMatch[1].trim().toLowerCase() : null;
+
   // Extract success criteria as structured array
   const criteriaMatch = section.match(/\*\*Success Criteria\*\*[^\n]*:\s*\n((?:\s*\d+\.\s*[^\n]+\n?)+)/i);
   const success_criteria = criteriaMatch
@@ -96,6 +117,7 @@ function searchPhaseInContent(content, escapedPhase, phaseNum) {
     phase_number: phaseNum,
     phase_name: phaseName,
     goal,
+    mode,
     success_criteria,
     section,
   };
@@ -181,6 +203,9 @@ function cmdRoadmapAnalyze(cwd, raw) {
     const goalMatch = section.match(/\*\*Goal(?::\*\*|\*\*:)\s*([^\n]+)/i);
     const goal = goalMatch ? goalMatch[1].trim() : null;
 
+    const modeMatch = section.match(/\*\*Mode(?::\*\*|\*\*:)\s*([^\n]+)/i);
+    const mode = modeMatch ? modeMatch[1].trim().toLowerCase() : null;
+
     const dependsMatch = section.match(/\*\*Depends on(?::\*\*|\*\*:)\s*([^\n]+)/i);
     const depends_on = dependsMatch ? dependsMatch[1].trim() : null;
 
@@ -196,11 +221,11 @@ function cmdRoadmapAnalyze(cwd, raw) {
       const dirMatch = _phaseDirNames.find(d => phaseTokenMatches(d, normalized));
 
       if (dirMatch) {
-        const phaseFiles = fs.readdirSync(path.join(phasesDir, dirMatch));
-        planCount = phaseFiles.filter(f => f.endsWith('-PLAN.md') || f === 'PLAN.md').length;
-        summaryCount = phaseFiles.filter(f => f.endsWith('-SUMMARY.md') || f === 'SUMMARY.md').length;
-        hasContext = phaseFiles.some(f => f.endsWith('-CONTEXT.md') || f === 'CONTEXT.md');
-        hasResearch = phaseFiles.some(f => f.endsWith('-RESEARCH.md') || f === 'RESEARCH.md');
+        const counts = countPhasePlansAndSummaries(path.join(phasesDir, dirMatch));
+        planCount = counts.planCount;
+        summaryCount = counts.summaryCount;
+        hasContext = counts.hasContext;
+        hasResearch = counts.hasResearch;
 
         if (summaryCount >= planCount && planCount > 0) diskStatus = 'complete';
         else if (summaryCount > 0) diskStatus = 'partial';
@@ -227,6 +252,7 @@ function cmdRoadmapAnalyze(cwd, raw) {
       number: phaseNum,
       name: phaseName,
       goal,
+      mode,
       depends_on,
       plan_count: planCount,
       summary_count: summaryCount,

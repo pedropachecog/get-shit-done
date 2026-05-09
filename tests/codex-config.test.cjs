@@ -1,3 +1,8 @@
+// allow-test-rule: pending-migration-to-typed-ir [#2974]
+// Tracked in #2974 for migration to typed-IR assertions per CONTRIBUTING.md
+// "Prohibited: Raw Text Matching on Test Outputs". Per-file review may
+// reclassify some entries as source-text-is-the-product during migration.
+
 /**
  * GSD Tools Tests - codex-config.cjs
  *
@@ -46,6 +51,7 @@ const {
   GSD_CODEX_MARKER,
   CODEX_AGENT_SANDBOX,
   parseTomlToObject,
+  resolveNodeRunner,
 } = require('../bin/install.js');
 
 function runCodexInstall(codexHome, cwd = path.join(__dirname, '..')) {
@@ -1429,10 +1435,19 @@ describe('Codex install hook configuration (e2e)', () => {
     assert.ok(parsed.hooks && Array.isArray(parsed.hooks.SessionStart), 'writes [[hooks.SessionStart]] AoT');
     assert.ok(Array.isArray(parsed.hooks.SessionStart[0].hooks), 'writes [[hooks.SessionStart.hooks]] sub-table');
     assert.strictEqual(parsed.hooks.SessionStart[0].hooks[0].type, 'command', 'handler type is "command"');
+    // #3017: handler command now uses the absolute Node binary path so
+    // GUI/minimal-PATH runtimes can resolve it. The shape is
+    //   "<absolute-node-path>" "<hook-path>"
+    // where <absolute-node-path> is the normalized runner selected by
+    // resolveNodeRunner() and the hook path is also quoted. Homebrew Cellar
+    // execPath values intentionally normalize to stable Homebrew symlinks.
+    const expectedRunner = JSON.parse(resolveNodeRunner());
+    const expectedHookPath = path.join(codexHome, 'hooks', 'gsd-check-update.js').replace(/\\/g, '/');
+    const expectedCommand = `"${expectedRunner}" "${expectedHookPath}"`;
     assert.strictEqual(
       parsed.hooks.SessionStart[0].hooks[0].command,
-      'node ' + path.join(codexHome, 'hooks', 'gsd-check-update.js').replace(/\\/g, '/'),
-      'handler command must be the exact absolute path to gsd-check-update.js'
+      expectedCommand,
+      'handler command must use absolute node runner pointing at gsd-check-update.js (#3017)'
     );
     assert.ok(!Array.isArray(parsed.hooks), 'no flat [[hooks]] AoT emitted');
     assert.strictEqual(countMatches(content, /^codex_hooks = true$/gm), 1, 'writes one codex_hooks key');
