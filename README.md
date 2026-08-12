@@ -1,3 +1,10 @@
+> [!WARNING]
+> **This fork is no longer maintained.**
+>
+> The original upstream project has been superseded by the community-maintained [Open GSD](https://github.com/open-gsd/gsd-core). This repository remains available as a historical reference for its local-first SearXNG and Context integrations, but it will not receive updates or security fixes.
+>
+> **Do not use this fork for new installations.** Use [open-gsd/gsd-core](https://github.com/open-gsd/gsd-core) instead.
+
 <div align="center">
 
 # GET SHIT DONE — Local-First Fork (Get Shit Done Locally for Claude Code)
